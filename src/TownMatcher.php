@@ -16,6 +16,28 @@ final class TownMatcher
     /** @var array<string,array<string,string>> 市区町村コード => (バリエーション => 正規の町名) */
     private array $candidatesByCity = [];
 
+    /**
+     * 地名に現れる異体字・表記ゆれの同値グループ。
+     * 各グループ内の文字は互いに置換可能として扱う。
+     *
+     * @var list<list<string>>
+     */
+    private const CHAR_EQUIVALENCES = [
+        ['ヶ', 'ケ', 'が', 'ガ'],
+        ['ノ', '之', 'の'],
+        ['ッ', 'ツ'],
+        ['ニ', '二'],  // カタカナ「ニ」と漢数字「二」
+        ['ハ', '八'],  // カタカナ「ハ」と漢数字「八」
+        ['崎', '﨑'],
+        ['塚', "\u{FA10}"],  // 塚 (U+FA10)
+        ['舘', '館'],
+        ['竈', '釜'],
+        ['條', '条'],
+        ['藪', '薮'],
+        ['渕', '淵', '渊'],
+        ['曾', '曽'],
+    ];
+
     public function __construct(private readonly PostalCodeRepository $repository)
     {
     }
@@ -34,10 +56,25 @@ final class TownMatcher
                 NumeralConverter::kanjiToArabic($town),
                 NumeralConverter::arabicToKanji($town),
             ];
+            // 数字バリエーションに対して、さらに文字の異体字バリエーションを生成する
+            $allVariants = [];
             foreach ($variants as $variant) {
+                foreach (self::generateCharVariants($variant) as $charVariant) {
+                    $allVariants[] = $charVariant;
+                }
+            }
+            foreach ($allVariants as $variant) {
                 $variantToTown[$variant] ??= $town;
                 $variantToTown['字' . $variant] ??= $town;
                 $variantToTown['大字' . $variant] ??= $town;
+            }
+        }
+
+        // 町省略バリエーション: 町名末尾の「町」を省いた短縮形でもマッチさせる
+        foreach ($this->repository->townsByCity($cityCode) as $town) {
+            if (mb_substr($town, -1) === '町' && mb_strlen($town) >= 3) {
+                $shortened = mb_substr($town, 0, -1);
+                $variantToTown[$shortened] ??= $town;
             }
         }
 
@@ -47,10 +84,57 @@ final class TownMatcher
     }
 
     /**
+     * テキストに含まれる異体字を置換して、表記バリエーションの配列を返す。
+     * 元のテキストも含む。文字グループごとに独立して置換し、組み合わせ爆発を防ぐため
+     * 各グループにつき1回だけ置換する（同じグループの文字が複数出現する場合も一括置換）。
+     *
+     * @return list<string>
+     */
+    private static function generateCharVariants(string $text): array
+    {
+        $results = [$text];
+
+        foreach (self::CHAR_EQUIVALENCES as $group) {
+            // このグループのどの文字がテキストに含まれるか確認
+            $foundChars = [];
+            foreach ($group as $char) {
+                if (mb_strpos($text, $char) !== false) {
+                    $foundChars[] = $char;
+                }
+            }
+            if ($foundChars === []) {
+                continue;
+            }
+
+            // 見つかった文字を、グループ内の他の文字に一括置換してバリエーションを追加
+            $newResults = [];
+            foreach ($results as $current) {
+                foreach ($group as $replacement) {
+                    // 置換先がすでに含まれている文字と同じならスキップ（元テキストの再生成を防ぐ）
+                    $replaced = $current;
+                    foreach ($foundChars as $found) {
+                        if ($found !== $replacement) {
+                            $replaced = str_replace($found, $replacement, $replaced);
+                        }
+                    }
+                    if ($replaced !== $current) {
+                        $newResults[] = $replaced;
+                    }
+                }
+            }
+            foreach ($newResults as $nr) {
+                $results[] = $nr;
+            }
+        }
+
+        return $results;
+    }
+
+    /**
      * $textの先頭から最長一致する町名を探す。
      *
      * @return array{town: string, dbTown: string, matchedLength: int}|null
-     *         一致すれば、漢数字表記に統一した表示用のtownと、postal_codes/town_detailsを
+     *         一致すれば、漢数字表記に統一した表示用のtownと、postal_codesを
      *         検索する際に使うDB上の原表記(dbTown)、$text中で一致した文字数（mb単位）。
      *         一致しなければnull。
      */

@@ -10,6 +10,10 @@ namespace JpAddressNormalizer;
  * 元の表記（raw）は必ず保持する。丁目・番地・枝番・号として機械的に読み取れた場合のみ
  * 該当フィールドに数値が入る。「地割」「線」のような特殊な表記は、raw以外は全てnullになる
  * （番号の抽出はしない。地割・線であること自体はrawを見れば分かる）。
+ *
+ * 丁目は通常数字だが、区画整理の経緯等で「Ａ丁目」「Ｂ丁目」のようにアルファベットが
+ * 使われている地域も実在するため、その場合は$chomeではなく$chomeLabelに格納する
+ * （$chomeと$chomeLabelが同時にセットされることはない）。
  */
 final class Street
 {
@@ -19,6 +23,7 @@ final class Street
         public readonly ?int $banchi,
         public readonly ?int $banchiSub,
         public readonly ?int $go,
+        public readonly ?string $chomeLabel = null,
     ) {
     }
 
@@ -34,13 +39,15 @@ final class Street
      */
     public function format(): string
     {
-        if ($this->chome === null && $this->banchi === null) {
+        if ($this->chome === null && $this->chomeLabel === null && $this->banchi === null) {
             return $this->raw;
         }
 
         $parts = [];
         if ($this->chome !== null) {
             $parts[] = "{$this->chome}丁目";
+        } elseif ($this->chomeLabel !== null) {
+            $parts[] = "{$this->chomeLabel}丁目";
         }
         if ($this->banchi !== null) {
             $number = (string) $this->banchi;
@@ -62,6 +69,7 @@ final class Street
         return [
             'raw' => $this->raw,
             'chome' => $this->chome,
+            'chome_label' => $this->chomeLabel,
             'banchi' => $this->banchi,
             'banchi_sub' => $this->banchiSub,
             'go' => $this->go,

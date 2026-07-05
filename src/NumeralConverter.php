@@ -11,6 +11,7 @@ namespace JpAddressNormalizer;
 final class NumeralConverter
 {
     private const KANJI_DIGITS = [
+        '壱' => 1, '弐' => 2, '参' => 3,
         '一' => 1, '二' => 2, '三' => 3, '四' => 4, '五' => 5,
         '六' => 6, '七' => 7, '八' => 8, '九' => 9,
     ];
@@ -21,7 +22,7 @@ final class NumeralConverter
 
     private static function kanjiNumberPattern(): string
     {
-        return self::$kanjiNumberPattern ??= '[一二三四五六七八九]?十[一二三四五六七八九]?|[一二三四五六七八九]';
+        return self::$kanjiNumberPattern ??= '[一二三四五六七八九壱弐参]?十[一二三四五六七八九壱弐参]?|[一二三四五六七八九壱弐参]';
     }
 
     private static function kanjiTokenToInt(string $token): int
@@ -72,6 +73,16 @@ final class NumeralConverter
     private static function intToFullwidth(int $n): string
     {
         return strtr((string) $n, self::halfToFullMap());
+    }
+
+    /**
+     * 全角算用数字を半角に変換し、整数として返す。
+     * 半角算用数字が含まれていればそのまま処理される。
+     */
+    public static function toHalfwidthInt(string $digits): int
+    {
+        $halfwidth = strtr($digits, self::fullToHalfMap());
+        return (int) $halfwidth;
     }
 
     /** 文字列中の漢数字(1〜99)を全角算用数字に変換する。 */

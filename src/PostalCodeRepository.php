@@ -17,8 +17,17 @@ final class PostalCodeRepository
     /** @var array<string,string>|null 都道府県名 => 都道府県コード */
     private ?array $prefectures = null;
 
+    /** @var array<string,string>|null 都道府県コード => 都道府県名 */
+    private ?array $prefectureNamesByCode = null;
+
+    /** @var array<string,string> 市区町村コード => 市区町村名 */
+    private array $cityNamesByCode = [];
+
     /** @var array<string,array<string,string>> 都道府県コード => (市区町村名 => 市区町村コード) */
     private array $citiesByPrefecture = [];
+
+    /** @var array<string,list<array{string,string}>>|null 市区町村名 => [[都道府県コード, 市区町村コード], ...]（名前が長い順） */
+    private ?array $citiesByName = null;
 
     /** @var array<string,list<string>> 市区町村コード => 町名の一覧(空文字列を除く) */
     private array $townsByCity = [];
@@ -26,8 +35,8 @@ final class PostalCodeRepository
     /** @var array<string,list<string>> "市区町村コード\x00町名" => 郵便番号の一覧 */
     private array $postalCodesByTown = [];
 
-    /** @var array<string,list<array{postal_code: string, detail: string, chome_from: ?int, chome_to: ?int}>> */
-    private array $townDetails = [];
+    /** @var array<string,list<TownDetail>> */
+    private array $detailsCache = [];
 
     public function __construct(string $databasePath)
     {
@@ -57,6 +66,15 @@ final class PostalCodeRepository
         return $this->prefectures;
     }
 
+    /** 都道府県コードから正式な都道府県名を引く（統一表記での出力用）。 */
+    public function prefectureName(string $prefectureCode): ?string
+    {
+        if ($this->prefectureNamesByCode === null) {
+            $this->prefectureNamesByCode = array_flip($this->prefectures());
+        }
+        return $this->prefectureNamesByCode[$prefectureCode] ?? null;
+    }
+
     /** @return array<string,string> 市区町村名 => 市区町村コード（名前が長い順） */
     public function citiesByPrefecture(string $prefectureCode): array
     {
@@ -66,11 +84,43 @@ final class PostalCodeRepository
             $map = [];
             foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
                 $map[$row['name']] = $row['city_code'];
+                $this->cityNamesByCode[$row['city_code']] = $row['name'];
             }
             uksort($map, static fn (string $a, string $b) => mb_strlen($b) - mb_strlen($a));
             $this->citiesByPrefecture[$prefectureCode] = $map;
         }
         return $this->citiesByPrefecture[$prefectureCode];
+    }
+
+    /** 都道府県コード・市区町村コードから正式な市区町村名を引く（統一表記での出力用）。 */
+    public function cityName(string $prefectureCode, string $cityCode): ?string
+    {
+        if (!isset($this->cityNamesByCode[$cityCode])) {
+            // 名前一覧を構築するキャッシュを温める（都道府県省略時の推測経由では未取得のことがある）。
+            $this->citiesByPrefecture($prefectureCode);
+        }
+        return $this->cityNamesByCode[$cityCode] ?? null;
+    }
+
+    /**
+     * 都道府県を問わず、全国の市区町村名から都道府県コード・市区町村コードを引く。
+     * 同名の市区町村が複数の都道府県に存在する場合は、要素が2件以上になる
+     * （都道府県名が省略された住所を解析する際、一意に決まる場合のみ使うための情報）。
+     *
+     * @return array<string,list<array{string,string}>> 市区町村名 => [[都道府県コード, 市区町村コード], ...]（名前が長い順）
+     */
+    public function citiesByName(): array
+    {
+        if ($this->citiesByName === null) {
+            $rows = $this->pdo->query('SELECT prefecture_code, city_code, name FROM cities')->fetchAll(PDO::FETCH_ASSOC);
+            $map = [];
+            foreach ($rows as $row) {
+                $map[$row['name']][] = [$row['prefecture_code'], $row['city_code']];
+            }
+            uksort($map, static fn (string $a, string $b) => mb_strlen($b) - mb_strlen($a));
+            $this->citiesByName = $map;
+        }
+        return $this->citiesByName;
     }
 
     /** @return list<string> 町名の一覧（重複無し、空文字列を除く） */
@@ -100,22 +150,20 @@ final class PostalCodeRepository
         return $this->postalCodesByTown[$key];
     }
 
-    /**
-     * 同じ町名が複数の郵便番号に分かれる場合の判別情報を返す。1つの郵便番号にしか
-     * 対応しない町名の場合は空配列になる。
-     *
-     * @return list<array{postal_code: string, detail: string, chome_from: ?int, chome_to: ?int}>
-     */
-    public function townDetails(string $cityCode, string $town): array
+    /** @return list<TownDetail> */
+    public function details(string $cityCode, string $town): array
     {
         $key = $cityCode . "\x00" . $town;
-        if (!isset($this->townDetails[$key])) {
+        if (!isset($this->detailsCache[$key])) {
             $stmt = $this->pdo->prepare(
-                'SELECT postal_code, detail, chome_from, chome_to FROM town_details WHERE city_code = ? AND town = ?'
+                "SELECT postal_code, detail FROM postal_codes WHERE city_code = ? AND town = ? AND detail != ''"
             );
             $stmt->execute([$cityCode, $town]);
-            $this->townDetails[$key] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            $this->detailsCache[$key] = array_map(
+                static fn (array $row) => new TownDetail($row['postal_code'], $row['detail']),
+                $stmt->fetchAll(PDO::FETCH_ASSOC)
+            );
         }
-        return $this->townDetails[$key];
+        return $this->detailsCache[$key];
     }
 }

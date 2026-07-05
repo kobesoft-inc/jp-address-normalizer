@@ -4,17 +4,8 @@ declare(strict_types=1);
 
 namespace JpAddressNormalizer;
 
-/**
- * 住所文字列を分割した結果。解決できなかった項目はnullまたは空文字列になる。
- *
- * postalCodeは、入力文字列に郵便番号が含まれていた場合はそれを、含まれていない場合は
- * town・streetから逆引きで一意に確定できた場合にその値を格納する（ある程度のベストエフォート）。
- * 複数の郵便番号の候補があり一意に絞り込めない場合は、postalCodeはnullのまま
- * postalCodeCandidatesに候補が入る。
- */
 final class ParsedAddress
 {
-    /** @param list<string> $postalCodeCandidates */
     public function __construct(
         public readonly ?string $postalCode,
         public readonly ?string $prefectureCode,
@@ -22,8 +13,19 @@ final class ParsedAddress
         public readonly string $town,
         public readonly Street $street,
         public readonly string $building,
-        public readonly array $postalCodeCandidates = [],
+        public readonly ?string $prefectureName = null,
+        public readonly ?string $cityName = null,
+        public readonly ?UnresolvedReason $unresolvedReason = null,
     ) {
+    }
+
+    public function format(): string
+    {
+        return ($this->prefectureName ?? '')
+            . ($this->cityName ?? '')
+            . $this->town
+            . $this->street->format()
+            . $this->building;
     }
 
     /** @return array<string, mixed> */
@@ -31,12 +33,15 @@ final class ParsedAddress
     {
         return [
             'postal_code' => $this->postalCode,
-            'postal_code_candidates' => $this->postalCodeCandidates,
             'prefecture_code' => $this->prefectureCode,
+            'prefecture_name' => $this->prefectureName,
             'city_code' => $this->cityCode,
+            'city_name' => $this->cityName,
             'town' => $this->town,
             'street' => $this->street->toArray(),
             'building' => $this->building,
+            'unresolved_reason' => $this->unresolvedReason?->value,
+            'formatted' => $this->format(),
         ];
     }
 }

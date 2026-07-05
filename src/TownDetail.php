@@ -1,0 +1,84 @@
+<?php
+
+declare(strict_types=1);
+
+namespace JpAddressNormalizer;
+
+/**
+ * 郵便番号とdetail文字列のペアを表す値オブジェクト。
+ * detail文字列をParsedDetailにパースし、マッチ判定を委譲する。
+ */
+final class TownDetail
+{
+    private ?ParsedDetail $parsed = null;
+
+    public function __construct(
+        public readonly string $postalCode,
+        public readonly string $detail,
+    ) {
+    }
+
+    public function parsed(): ParsedDetail
+    {
+        return $this->parsed ??= ParsedDetail::parse($this->detail);
+    }
+
+    public function isCatchAll(): bool
+    {
+        return $this->parsed()->isCatchAll();
+    }
+
+    public function hasChomeRange(): bool
+    {
+        return $this->parsed()->discriminatesByChome();
+    }
+
+    public function matchesChome(int $chome): bool
+    {
+        return $this->parsed()->matchesChome($chome);
+    }
+
+    public function describesBanchi(): bool
+    {
+        return $this->parsed()->discriminatesByBanchi();
+    }
+
+    /** @return bool|null */
+    public function evaluateBanchi(int $banchi, ?int $banchiSub): ?bool
+    {
+        return $this->parsed()->evaluateBanchi($banchi, $banchiSub);
+    }
+
+    public function describesFloor(): bool
+    {
+        return $this->parsed()->discriminatesByFloor();
+    }
+
+    public function floorNumber(): ?int
+    {
+        return $this->parsed()->floorNumber();
+    }
+
+    public function isUnknownFloor(): bool
+    {
+        return $this->parsed()->isUnknownFloor();
+    }
+
+    public function matchesText(string $haystack): bool
+    {
+        return $this->parsed()->matchesText($haystack);
+    }
+
+    /** @return array<string, mixed> */
+    public function toArray(): array
+    {
+        $items = $this->parsed()->items;
+        $patternValue = count($items) > 0 ? $items[0]->pattern->value : null;
+
+        return [
+            'postal_code' => $this->postalCode,
+            'detail' => $this->detail,
+            'pattern' => $patternValue,
+        ];
+    }
+}
