@@ -25,7 +25,9 @@ final class StreetParser
             }
         }
 
-        $remaining = $trimmed;
+        // 「三十八丁目」のような漢数字表記の丁目・番地も抽出できるよう、算用数字に統一してから解析する。
+        // 「三八」のように「十」を欠いた表記も、桁を並べた算用数字（38）として解釈する。
+        $remaining = NumeralConverter::kanjiToArabic($trimmed);
         $chome = null;
         if (preg_match(self::CHOME_PATTERN, $remaining, $m) === 1) {
             $chome = self::toInt($m[1]);
