@@ -16,6 +16,7 @@ final class ParsedAddress
         public readonly ?string $prefectureName = null,
         public readonly ?string $cityName = null,
         public readonly ?UnresolvedReason $unresolvedReason = null,
+        public readonly ?string $kyotoStreet = null,
     ) {
     }
 
@@ -23,6 +24,7 @@ final class ParsedAddress
     {
         return ($this->prefectureName ?? '')
             . ($this->cityName ?? '')
+            . ($this->kyotoStreet ?? '')
             . $this->town
             . $this->street->format()
             . $this->building;
@@ -40,6 +42,7 @@ final class ParsedAddress
             'town' => $this->town,
             'street' => $this->street->toArray(),
             'building' => $this->building,
+            'kyoto_street' => $this->kyotoStreet,
             'unresolved_reason' => $this->unresolvedReason?->value,
             'formatted' => $this->format(),
         ];

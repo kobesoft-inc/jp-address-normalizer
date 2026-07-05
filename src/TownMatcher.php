@@ -67,6 +67,11 @@ final class TownMatcher
                 $variantToTown[$variant] ??= $town;
                 $variantToTown['字' . $variant] ??= $town;
                 $variantToTown['大字' . $variant] ??= $town;
+                // 合併住所で町名途中に「大字」「字」が挿入されるケース対応
+                // 例: DB上「武雄町昭和」→ 入力「武雄町大字昭和」でもマッチ
+                foreach (self::insertAzaVariants($variant) as $azaVariant) {
+                    $variantToTown[$azaVariant] ??= $town;
+                }
             }
         }
 
@@ -81,6 +86,36 @@ final class TownMatcher
         uksort($variantToTown, static fn (string $a, string $b) => mb_strlen($b) - mb_strlen($a));
 
         return $this->candidatesByCity[$cityCode] = $variantToTown;
+    }
+
+    /**
+     * 町名中の「町」「区」等の区切りの後ろに「大字」「字」を挿入したバリエーションを生成。
+     * 例: 「武雄町昭和」→ [「武雄町大字昭和」「武雄町字昭和」]
+     *
+     * @return list<string>
+     */
+    private static function insertAzaVariants(string $town): array
+    {
+        $results = [];
+        // 「町」「区」の直後に「大字」「字」を挿入する
+        if (preg_match_all('/(?:町|区)/u', $town, $matches, PREG_OFFSET_CAPTURE) > 0) {
+            foreach ($matches[0] as $match) {
+                $bytePos = $match[1] + strlen($match[0]);
+                // 区切りの後ろに既に文字がある場合のみ（末尾の「町」等は対象外）
+                if ($bytePos >= strlen($town)) {
+                    continue;
+                }
+                $before = substr($town, 0, $bytePos);
+                $after = substr($town, $bytePos);
+                // 既に「大字」「字」で始まっている場合はスキップ
+                if (str_starts_with($after, '大字') || str_starts_with($after, '字')) {
+                    continue;
+                }
+                $results[] = $before . '大字' . $after;
+                $results[] = $before . '字' . $after;
+            }
+        }
+        return $results;
     }
 
     /**
@@ -130,17 +165,127 @@ final class TownMatcher
         return $results;
     }
 
+    private const KYOTO_DIRECTION_PATTERN = '/(?:上[ルる]|下[ルる]|[東西南北]入[ルる]?)/u';
+
     /**
      * $textの先頭から最長一致する町名を探す。
      *
-     * @return array{town: string, dbTown: string, matchedLength: int}|null
-     *         一致すれば、漢数字表記に統一した表示用のtownと、postal_codesを
-     *         検索する際に使うDB上の原表記(dbTown)、$text中で一致した文字数（mb単位）。
-     *         一致しなければnull。
+     * 京都の住所では「通り名＋方角（上ル/下ル/西入等）＋正式町名」の構造を持つ。
+     * 通り名の先頭が別の短い町名にマッチしてしまうのを防ぐため、方角キーワードを
+     * 検出した場合はその後ろから改めて町名マッチを試みて、より適切な方を採用する。
+     *
+     * また、テキスト中の「大字」「字」を除去したバリエーションでもマッチを試みる。
+     *
+     * @return array{town: string, dbTown: string, matchedLength: int, kyotoStreet: ?string}|null
      */
     public function match(string $cityCode, string $text): ?array
     {
-        foreach ($this->candidatesForCity($cityCode) as $variant => $canonicalTown) {
+        $candidates = $this->candidatesForCity($cityCode);
+        $directMatch = $this->matchFirst($candidates, $text);
+
+        // テキスト中の「大字」「字」を除去して再マッチ（入力に余分な字/大字がある場合）
+        if ($directMatch === null || $this->hasAzaInText($text)) {
+            $strippedMatch = $this->matchWithAzaStripped($candidates, $text);
+            if ($strippedMatch !== null) {
+                if ($directMatch === null || $strippedMatch['matchedLength'] > $directMatch['matchedLength']) {
+                    $directMatch = $strippedMatch;
+                }
+            }
+        }
+
+        // 京都の通り名対応
+        $afterDirection = $this->findAfterDirection($text);
+        if ($afterDirection !== null) {
+            $rematch = $this->matchFirst($candidates, $afterDirection['remaining']);
+            if ($rematch === null) {
+                $rematch = $this->matchWithAzaStripped($candidates, $afterDirection['remaining']);
+            }
+            if ($rematch !== null) {
+                $kyotoStreet = mb_substr($text, 0, $afterDirection['offset']);
+                return [
+                    'town' => $rematch['town'],
+                    'dbTown' => $rematch['dbTown'],
+                    'matchedLength' => $afterDirection['offset'] + $rematch['matchedLength'],
+                    'kyotoStreet' => $kyotoStreet,
+                ];
+            }
+        }
+
+        if ($directMatch !== null) {
+            $directMatch['kyotoStreet'] ??= null;
+        }
+        return $directMatch;
+    }
+
+    private function hasAzaInText(string $text): bool
+    {
+        return mb_strpos($text, '大字') !== false || mb_strpos($text, '字') !== false;
+    }
+
+    /**
+     * テキストから「大字」「字」を除去してマッチを試みる。
+     * マッチした場合、matchedLengthは元テキスト上での消費文字数を返す。
+     *
+     * @param array<string,string> $candidates
+     * @return array{town: string, dbTown: string, matchedLength: int}|null
+     */
+    private function matchWithAzaStripped(array $candidates, string $text): ?array
+    {
+        // 「大字」「字」の出現位置を全て見つけて除去
+        $stripped = $text;
+        $azaPositions = [];
+        // 「大字」を先に処理（「字」を先にすると「大字」の「字」部分だけ消えてしまう）
+        if (preg_match_all('/大字|字/u', $text, $matches, PREG_OFFSET_CAPTURE)) {
+            $offset = 0;
+            foreach ($matches[0] as [$match, $bytePos]) {
+                $azaPositions[] = ['byte' => $bytePos, 'len' => strlen($match), 'mbLen' => mb_strlen($match)];
+            }
+        }
+        $stripped = (string) preg_replace('/大字|字/u', '', $text);
+        if ($stripped === $text) {
+            return null;
+        }
+
+        $result = $this->matchFirst($candidates, $stripped);
+        if ($result === null) {
+            return null;
+        }
+
+        // 元テキスト上で何文字消費するか計算
+        // strippedでのマッチ長を元テキストにマッピング
+        $strippedConsumed = $result['matchedLength'];
+        $origPos = 0;
+        $strippedPos = 0;
+        $chars = mb_str_split($text);
+        $i = 0;
+        while ($strippedPos < $strippedConsumed && $i < count($chars)) {
+            $remaining = mb_substr($text, $origPos);
+            if (str_starts_with($remaining, '大字')) {
+                $origPos += 2;
+                $i += 2;
+                continue;
+            }
+            if (str_starts_with($remaining, '字')) {
+                $origPos += 1;
+                $i += 1;
+                continue;
+            }
+            $origPos++;
+            $strippedPos++;
+            $i++;
+        }
+
+        $result['matchedLength'] = $origPos;
+        return $result;
+    }
+
+    /**
+     * @param array<string,string> $candidates
+     * @return array{town: string, dbTown: string, matchedLength: int}|null
+     */
+    private function matchFirst(array $candidates, string $text): ?array
+    {
+        foreach ($candidates as $variant => $canonicalTown) {
             if (str_starts_with($text, $variant)) {
                 return [
                     'town' => NumeralConverter::arabicToKanji($canonicalTown),
@@ -150,5 +295,26 @@ final class TownMatcher
             }
         }
         return null;
+    }
+
+    /**
+     * テキスト中の最後の京都方角キーワードの直後の位置と残り文字列を返す。
+     *
+     * @return array{offset: int, remaining: string}|null
+     */
+    private function findAfterDirection(string $text): ?array
+    {
+        if (preg_match_all(self::KYOTO_DIRECTION_PATTERN, $text, $matches, PREG_OFFSET_CAPTURE) === 0) {
+            return null;
+        }
+        // 最後の方角キーワードの後ろから町名を探す
+        $lastMatch = end($matches[0]);
+        $byteOffset = $lastMatch[1] + strlen($lastMatch[0]);
+        $remaining = substr($text, $byteOffset);
+        if ($remaining === '' || $remaining === false) {
+            return null;
+        }
+        $offset = mb_strlen(substr($text, 0, $byteOffset));
+        return ['offset' => $offset, 'remaining' => $remaining];
     }
 }

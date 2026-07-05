@@ -84,21 +84,43 @@ final class AddressNormalizer
 
         $town = '';
         $dbTown = '';
+        $kyotoStreet = null;
         $townMatch = $this->townMatcher->match($cityCode, $text);
         if ($townMatch !== null) {
             $town = $townMatch['town'];
             $dbTown = $townMatch['dbTown'];
+            $kyotoStreet = $townMatch['kyotoStreet'];
             $text = mb_substr($text, $townMatch['matchedLength']);
         }
 
         $rest = StreetBuildingSplitter::split($text);
         $street = StreetParser::parse($rest['street']);
 
+        // フォールバック: streetが空でbuildingが別の町名で始まる場合、
+        // 最初のマッチが短すぎた可能性がある（例: 「本丸子町」→「本」+「丸子町...」）。
+        // buildingの先頭から再度町名マッチを試み、成功すればそちらを採用する。
+        if ($townMatch !== null && $rest['street'] === '' && $rest['building'] !== '') {
+            $retryMatch = $this->townMatcher->match($cityCode, $rest['building']);
+            if ($retryMatch !== null) {
+                $town = $retryMatch['town'];
+                $dbTown = $retryMatch['dbTown'];
+                $kyotoStreet = $retryMatch['kyotoStreet'];
+                $remainingAfterRetry = mb_substr($rest['building'], $retryMatch['matchedLength']);
+                $rest = StreetBuildingSplitter::split($remainingAfterRetry);
+                $street = StreetParser::parse($rest['street']);
+            }
+        }
+
         $unresolvedReason = null;
         if ($postalCode === null && $dbTown !== '') {
             $resolved = $this->postalCodeResolver->resolve($cityCode, $dbTown, $street, $rest['building']);
             $postalCode = $resolved->postalCode;
             $unresolvedReason = $resolved->unresolvedReason;
+        }
+
+        // 町名なし地域のフォールバック: 「○○村一円」のような全域エントリで郵便番号を解決
+        if ($postalCode === null && $town === '' && $cityCode !== null) {
+            $postalCode = $this->resolveByIchienEntry($cityCode);
         }
 
         return new ParsedAddress(
@@ -111,6 +133,7 @@ final class AddressNormalizer
             prefectureName: $prefectureName,
             cityName: $cityName,
             unresolvedReason: $unresolvedReason,
+            kyotoStreet: $kyotoStreet,
         );
     }
 
@@ -148,24 +171,33 @@ final class AddressNormalizer
         // Conditional: ー (U+30FC) and ｰ (U+FF70) only when between digits
         $text = (string) preg_replace('/(?<=[0-9０-９一二三四五六七八九十百千壱弐参])[ーｰ](?=[0-9０-９一二三四五六七八九十百千壱弐参])/u', '-', $text);
 
-        $text = str_replace(['ケ', 'ヵ'], 'ヶ', $text);
         return $text;
     }
 
+    private const KE_VARIANTS = ['ケ', 'ヶ', 'が', 'ガ', 'ヵ'];
+
     /**
      * $candidates（表記 => コード、長い表記順）のうち、$textの先頭に一致する最長のものを探す。
+     * ケ/ヶ/が/ガ/ヵ の表記ゆれを吸収してマッチする。
      *
      * @param array<string,string> $candidates
      * @return array{0: string|null, 1: string} [一致したコード（無ければnull）, 残りの文字列]
      */
     private function matchLongestPrefix(string $text, array $candidates): array
     {
+        $normalizedText = self::normalizeKe($text);
         foreach ($candidates as $name => $code) {
-            if (str_starts_with($text, $name)) {
+            $normalizedName = self::normalizeKe($name);
+            if (str_starts_with($normalizedText, $normalizedName)) {
                 return [$code, mb_substr($text, mb_strlen($name))];
             }
         }
         return [null, $text];
+    }
+
+    private static function normalizeKe(string $text): string
+    {
+        return str_replace(self::KE_VARIANTS, 'ヶ', $text);
     }
 
     /**
@@ -223,5 +255,22 @@ final class AddressNormalizer
         }
 
         return [null, $text];
+    }
+
+    /**
+     * 町名なし地域（「○○村一円」のような全域エントリ）から郵便番号を解決する。
+     */
+    private function resolveByIchienEntry(string $cityCode): ?string
+    {
+        $towns = $this->repository->townsByCity($cityCode);
+        foreach ($towns as $town) {
+            if (str_ends_with($town, '一円')) {
+                $postalCodes = $this->repository->postalCodesForTown($cityCode, $town);
+                if (count($postalCodes) === 1) {
+                    return $postalCodes[0];
+                }
+            }
+        }
+        return null;
     }
 }
