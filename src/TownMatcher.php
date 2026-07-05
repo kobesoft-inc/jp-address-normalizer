@@ -49,8 +49,10 @@ final class TownMatcher
     /**
      * $textの先頭から最長一致する町名を探す。
      *
-     * @return array{town: string, matchedLength: int}|null 一致すれば漢数字表記に統一した町名と、
-     *         $text中で一致した文字数（mb単位）。一致しなければnull。
+     * @return array{town: string, dbTown: string, matchedLength: int}|null
+     *         一致すれば、漢数字表記に統一した表示用のtownと、postal_codes/town_detailsを
+     *         検索する際に使うDB上の原表記(dbTown)、$text中で一致した文字数（mb単位）。
+     *         一致しなければnull。
      */
     public function match(string $cityCode, string $text): ?array
     {
@@ -58,6 +60,7 @@ final class TownMatcher
             if (str_starts_with($text, $variant)) {
                 return [
                     'town' => NumeralConverter::arabicToKanji($canonicalTown),
+                    'dbTown' => $canonicalTown,
                     'matchedLength' => mb_strlen($variant),
                 ];
             }

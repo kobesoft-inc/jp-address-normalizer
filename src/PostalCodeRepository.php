@@ -23,6 +23,12 @@ final class PostalCodeRepository
     /** @var array<string,list<string>> 市区町村コード => 町名の一覧(空文字列を除く) */
     private array $townsByCity = [];
 
+    /** @var array<string,list<string>> "市区町村コード\x00町名" => 郵便番号の一覧 */
+    private array $postalCodesByTown = [];
+
+    /** @var array<string,list<array{postal_code: string, detail: string, chome_from: ?int, chome_to: ?int}>> */
+    private array $townDetails = [];
+
     public function __construct(string $databasePath)
     {
         $this->pdo = new PDO('sqlite:' . $databasePath);
@@ -78,5 +84,38 @@ final class PostalCodeRepository
             $this->townsByCity[$cityCode] = $stmt->fetchAll(PDO::FETCH_COLUMN);
         }
         return $this->townsByCity[$cityCode];
+    }
+
+    /** @return list<string> 該当する市区町村・町名の郵便番号の一覧（重複無し） */
+    public function postalCodesForTown(string $cityCode, string $town): array
+    {
+        $key = $cityCode . "\x00" . $town;
+        if (!isset($this->postalCodesByTown[$key])) {
+            $stmt = $this->pdo->prepare(
+                'SELECT DISTINCT postal_code FROM postal_codes WHERE city_code = ? AND town = ?'
+            );
+            $stmt->execute([$cityCode, $town]);
+            $this->postalCodesByTown[$key] = $stmt->fetchAll(PDO::FETCH_COLUMN);
+        }
+        return $this->postalCodesByTown[$key];
+    }
+
+    /**
+     * 同じ町名が複数の郵便番号に分かれる場合の判別情報を返す。1つの郵便番号にしか
+     * 対応しない町名の場合は空配列になる。
+     *
+     * @return list<array{postal_code: string, detail: string, chome_from: ?int, chome_to: ?int}>
+     */
+    public function townDetails(string $cityCode, string $town): array
+    {
+        $key = $cityCode . "\x00" . $town;
+        if (!isset($this->townDetails[$key])) {
+            $stmt = $this->pdo->prepare(
+                'SELECT postal_code, detail, chome_from, chome_to FROM town_details WHERE city_code = ? AND town = ?'
+            );
+            $stmt->execute([$cityCode, $town]);
+            $this->townDetails[$key] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        }
+        return $this->townDetails[$key];
     }
 }

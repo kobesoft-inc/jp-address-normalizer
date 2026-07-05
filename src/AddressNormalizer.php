@@ -23,11 +23,13 @@ final class AddressNormalizer
 
     private PostalCodeRepository $repository;
     private TownMatcher $townMatcher;
+    private PostalCodeResolver $postalCodeResolver;
 
     public function __construct(string $postalCodeDbPath)
     {
         $this->repository = new PostalCodeRepository($postalCodeDbPath);
         $this->townMatcher = new TownMatcher($this->repository);
+        $this->postalCodeResolver = new PostalCodeResolver($this->repository);
     }
 
     public static function fromPdo(PDO $pdo): self
@@ -35,12 +37,14 @@ final class AddressNormalizer
         $instance = (new \ReflectionClass(self::class))->newInstanceWithoutConstructor();
         $instance->repository = PostalCodeRepository::fromPdo($pdo);
         $instance->townMatcher = new TownMatcher($instance->repository);
+        $instance->postalCodeResolver = new PostalCodeResolver($instance->repository);
         return $instance;
     }
 
     public function normalize(string $address): ParsedAddress
     {
         $text = $address;
+        $emptyStreet = new Street('', null, null, null, null);
 
         $postalCode = null;
         if (preg_match(self::POSTAL_CODE_PATTERN, $text, $m) === 1) {
@@ -50,30 +54,43 @@ final class AddressNormalizer
 
         [$prefectureCode, $text] = $this->matchLongestPrefix($text, $this->repository->prefectures());
         if ($prefectureCode === null) {
-            return new ParsedAddress($postalCode, null, null, '', '', trim($text));
+            return new ParsedAddress($postalCode, null, null, '', $emptyStreet, trim($text));
         }
 
         [$cityCode, $text] = $this->matchLongestPrefix($text, $this->repository->citiesByPrefecture($prefectureCode));
         if ($cityCode === null) {
-            return new ParsedAddress($postalCode, $prefectureCode, null, '', '', trim($text));
+            return new ParsedAddress($postalCode, $prefectureCode, null, '', $emptyStreet, trim($text));
         }
 
         $town = '';
+        $dbTown = '';
         $townMatch = $this->townMatcher->match($cityCode, $text);
         if ($townMatch !== null) {
             $town = $townMatch['town'];
+            $dbTown = $townMatch['dbTown'];
             $text = mb_substr($text, $townMatch['matchedLength']);
         }
 
         $rest = StreetBuildingSplitter::split($text);
+        $street = StreetParser::parse($rest['street']);
+
+        $candidates = [];
+        if ($postalCode === null && $dbTown !== '') {
+            // postal_codes/town_detailsの検索には、表示用に漢数字統一したtownではなく、
+            // DBに実際に格納されている表記(dbTown)を使う必要がある。
+            $resolved = $this->postalCodeResolver->resolve($cityCode, $dbTown, $street, $rest['building']);
+            $postalCode = $resolved['postalCode'];
+            $candidates = $resolved['candidates'];
+        }
 
         return new ParsedAddress(
             $postalCode,
             $prefectureCode,
             $cityCode,
             $town,
-            $rest['street'],
+            $street,
             $rest['building'],
+            $candidates,
         );
     }
 

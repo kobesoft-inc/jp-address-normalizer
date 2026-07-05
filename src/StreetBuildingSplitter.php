@@ -12,10 +12,11 @@ namespace JpAddressNormalizer;
  */
 final class StreetBuildingSplitter
 {
-    // 数字の連続、または「丁目」「番地」「番」「号」「線」「区」「の」というキーワード単位、
+    // 数字の連続、または「丁目」「番地」「番」「号」「線」「区」「地割」「の」というキーワード単位、
     // または区切りのハイフン類の繰り返し。「地」や「目」を単独の文字クラスに含めないのは、
     // 「地下鉄」「目黒」のような建物名・地名の先頭と誤って連結するのを防ぐため。
-    private const STREET_PATTERN = '/^(?:[0-90-9０-９一二三四五六七八九十百千]+|丁目|番地|番|号|線|区|の|[\-－ー])+/u';
+    // 「地割」（北海道の開拓地番）はキーワードとして認識するが、数字の抽出はStreetParser側で行わない。
+    private const STREET_PATTERN = '/^(?:[0-90-9０-９一二三四五六七八九十百千]+|丁目|番地|地割|番|号|線|区|の|[\-－ー])+/u';
     private const TRAILING_SEPARATOR_PATTERN = '/[\-－ーの]+$/u';
 
     /** @return array{street: string, building: string} */
