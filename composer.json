@@ -1,0 +1,23 @@
+{
+    "name": "kobesoft-inc/jp-address-normalizer",
+    "description": "日本の住所文字列を、郵便番号・都道府県コード・市区町村コード・町名・番地・建物名に分割するライブラリ",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": ">=8.1",
+        "ext-pdo_sqlite": "*"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "JpAddressNormalizer\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "JpAddressNormalizer\\Tests\\": "tests/"
+        }
+    }
+}
