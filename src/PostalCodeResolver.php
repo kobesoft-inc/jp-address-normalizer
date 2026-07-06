@@ -71,9 +71,11 @@ final class PostalCodeResolver
         }
         if ($hasChomeDetails) {
             if ($street->chome !== null) {
+                // ChomeBanchi（丁目+番地の複合条件）は上のブロックで既に判定済みのため、
+                // ここでは丁目のみで判定できるChomeRange/ChomeExistenceだけを対象にする。
                 $match = $this->findUniqueMatch(
                     $details,
-                    static fn (TownDetail $d): bool => $d->matchesChome($street->chome)
+                    static fn (TownDetail $d): bool => $d->matchesPureChome($street->chome)
                 );
                 if ($match !== null) {
                     return PostalCodeResolveResult::resolved($match->postalCode);
@@ -81,10 +83,11 @@ final class PostalCodeResolver
             }
         }
 
-        // 番地で絞り込み
+        // 番地で絞り込み（丁目+番地の複合条件＝ChomeBanchiは対象外。既に上のブロックで判定済みであり、
+        // evaluateBanchi()は丁目を考慮できず誤って「判定不能」を返してしまうため）
         $hasBanchiDetails = false;
         foreach ($details as $d) {
-            if ($d->describesBanchi()) {
+            if ($d->describesPureBanchi()) {
                 $hasBanchiDetails = true;
                 break;
             }
@@ -92,7 +95,7 @@ final class PostalCodeResolver
         if ($hasBanchiDetails && $street->banchi !== null) {
             $banchiDetails = array_values(array_filter(
                 $details,
-                static fn (TownDetail $d): bool => $d->describesBanchi()
+                static fn (TownDetail $d): bool => $d->describesPureBanchi()
             ));
             $byBanchi = array_values(array_filter(
                 $banchiDetails,
@@ -246,8 +249,24 @@ final class PostalCodeResolver
     private static function allDefinitelyExcluded(array $others, Street $street): bool
     {
         foreach ($others as $d) {
+            if ($d->hasChomeBanchi()) {
+                // 丁目+番地の複合条件は、丁目・番地の両方が分かっている場合のみ
+                // 正しく除外判定できる（evaluateChomeBanchi()が両方を必要とするため）。
+                if ($street->chome === null || $street->banchi === null) {
+                    return false;
+                }
+                if ($d->evaluateChomeBanchi($street->chome, $street->banchi, $street->banchiSub) !== false) {
+                    return false;
+                }
+                continue;
+            }
             if ($d->hasChomeRange()) {
                 if ($street->chome === null) {
+                    // 「丁目」（丁目の有無のみが条件）の場合、丁目が無いことは
+                    // 「該当しない」と確定できる（何丁目かが不明なのとは異なる）。
+                    if ($d->isChomeExistenceOnly()) {
+                        continue;
+                    }
                     return false;
                 }
                 if ($d->matchesChome($street->chome)) {

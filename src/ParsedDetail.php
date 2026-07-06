@@ -91,6 +91,17 @@ final class ParsedDetail
         return $this->hasItemOfType(DetailPattern::ChomeRange, DetailPattern::ChomeExistence, DetailPattern::ChomeBanchi);
     }
 
+    /**
+     * detailが「丁目」（丁目の有無のみを条件とする）かどうか。
+     * この場合、住所に丁目が無い（chome===null）ことが「該当しない」ことの明確な根拠になる
+     * （ChomeRangeの場合と異なり、chomeが不明なのではなく「無い」と確定しているため）。
+     */
+    public function isChomeExistenceOnly(): bool
+    {
+        return $this->hasItemOfType(DetailPattern::ChomeExistence)
+            && !$this->hasItemOfType(DetailPattern::ChomeRange, DetailPattern::ChomeBanchi);
+    }
+
     public function matchesChome(int $chome): bool
     {
         foreach ($this->items as $item) {
@@ -113,9 +124,42 @@ final class ParsedDetail
         return false;
     }
 
+    /**
+     * 丁目のみで一致判定できるか（ChomeBanchiの丁目部分は含めない）。
+     * ChomeBanchi（例:「4丁目1〜14番」）は丁目が一致しても番地条件を満たすとは限らないため、
+     * 丁目だけで一致とみなしてはいけない（evaluateChomeBanchi()で番地も含めて判定する）。
+     */
+    public function matchesPureChome(int $chome): bool
+    {
+        foreach ($this->items as $item) {
+            if ($item->pattern === DetailPattern::ChomeRange) {
+                foreach ($item->args['ranges'] as $r) {
+                    if ($r['from'] <= $chome && $chome <= $r['to']) {
+                        return true;
+                    }
+                }
+            } elseif ($item->pattern === DetailPattern::ChomeExistence) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public function discriminatesByBanchi(): bool
     {
         return $this->hasItemOfType(DetailPattern::BanchiRange, DetailPattern::BanchiBound, DetailPattern::ChomeBanchi);
+    }
+
+    /**
+     * 丁目に依らない、純粋な番地のみによる絞り込み条件を持つか。
+     * ChomeBanchi（丁目+番地の複合条件）はここには含めない。
+     * evaluateBanchi()は丁目を考慮できないため、ChomeBanchiを含む詳細に対して
+     * evaluateBanchi()を呼ぶと常に「判定不能」を返してしまう
+     * （実際にはevaluateChomeBanchi()で丁目も含めて判定済みのため、二重に扱うと誤判定になる）。
+     */
+    public function discriminatesByPureBanchi(): bool
+    {
+        return $this->hasItemOfType(DetailPattern::BanchiRange, DetailPattern::BanchiBound);
     }
 
     public function hasChomeBanchi(): bool

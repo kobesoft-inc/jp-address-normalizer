@@ -33,14 +33,29 @@ final class TownDetail
         return $this->parsed()->discriminatesByChome();
     }
 
+    public function isChomeExistenceOnly(): bool
+    {
+        return $this->parsed()->isChomeExistenceOnly();
+    }
+
     public function matchesChome(int $chome): bool
     {
         return $this->parsed()->matchesChome($chome);
     }
 
+    public function matchesPureChome(int $chome): bool
+    {
+        return $this->parsed()->matchesPureChome($chome);
+    }
+
     public function describesBanchi(): bool
     {
         return $this->parsed()->discriminatesByBanchi();
+    }
+
+    public function describesPureBanchi(): bool
+    {
+        return $this->parsed()->discriminatesByPureBanchi();
     }
 
     /** @return bool|null */

@@ -155,8 +155,10 @@ final class PostalCodeRepository
     {
         $key = $cityCode . "\x00" . $town;
         if (!isset($this->detailsCache[$key])) {
+            // detail=''は「その他」と同じ扱いのcatch-allエントリ（ParsedDetail::CATCH_ALL_DETAILS）
+            // として消去法の対象にするため、ここでは除外しない。
             $stmt = $this->pdo->prepare(
-                "SELECT postal_code, detail FROM postal_codes WHERE city_code = ? AND town = ? AND detail != ''"
+                'SELECT postal_code, detail FROM postal_codes WHERE city_code = ? AND town = ?'
             );
             $stmt->execute([$cityCode, $town]);
             $this->detailsCache[$key] = array_map(
