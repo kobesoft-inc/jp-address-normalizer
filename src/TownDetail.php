@@ -49,6 +49,17 @@ final class TownDetail
         return $this->parsed()->evaluateBanchi($banchi, $banchiSub);
     }
 
+    public function hasChomeBanchi(): bool
+    {
+        return $this->parsed()->hasChomeBanchi();
+    }
+
+    /** @return bool|null */
+    public function evaluateChomeBanchi(int $chome, int $banchi, ?int $banchiSub): ?bool
+    {
+        return $this->parsed()->evaluateChomeBanchi($chome, $banchi, $banchiSub);
+    }
+
     public function describesFloor(): bool
     {
         return $this->parsed()->discriminatesByFloor();

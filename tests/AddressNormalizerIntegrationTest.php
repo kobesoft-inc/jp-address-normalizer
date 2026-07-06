@@ -253,4 +253,27 @@ final class AddressNormalizerIntegrationTest extends TestCase
         $this->assertSame('01207', $result->cityCode);
         $this->assertSame('西十九条南', $result->town);
     }
+
+    // ================================================================
+    // 町名なし地域の番地範囲区分（小菅村）
+    // ================================================================
+
+    public function testKosugeMuraBanchiRange(): void
+    {
+        $this->assertPostalCode('4090142', '山梨県北都留郡小菅村100');
+        $this->assertPostalCode('4090142', '山梨県北都留郡小菅村663');
+        $this->assertPostalCode('4090211', '山梨県北都留郡小菅村664');
+        $this->assertPostalCode('4090211', '山梨県北都留郡小菅村4000');
+    }
+
+    // ================================================================
+    // 番地以降パターン（ParsedDetailのBanchiBound）
+    // ================================================================
+
+    public function testBanchiBoundIkou(): void
+    {
+        // 小菅村: ６６４番地以降 → 4090211
+        $result = self::$normalizer->normalize('山梨県北都留郡小菅村664番地');
+        $this->assertSame('4090211', $result->postalCode);
+    }
 }

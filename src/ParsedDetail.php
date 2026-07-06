@@ -50,10 +50,18 @@ final class ParsedDetail
         }
 
         // BanchiBound
-        if (preg_match('/^([０-９0-9]+)番地?以(上|下)$/u', $detail, $m) === 1) {
+        if (preg_match('/^([０-９0-9]+)番地?以(上|降|下)$/u', $detail, $m) === 1) {
             return new self([new ParsedDetailItem(DetailPattern::BanchiBound, [
                 'boundary' => NumeralConverter::toHalfwidthInt($m[1]),
-                'direction' => $m[2] === '上' ? 'above' : 'below',
+                'direction' => $m[2] === '下' ? 'below' : 'above',
+            ])]);
+        }
+
+        // 「N〜」（N番地以上の別記法）
+        if (preg_match('/^([０-９0-9]+)[〜～]$/u', $detail, $m) === 1) {
+            return new self([new ParsedDetailItem(DetailPattern::BanchiBound, [
+                'boundary' => NumeralConverter::toHalfwidthInt($m[1]),
+                'direction' => 'above',
             ])]);
         }
 
@@ -80,7 +88,7 @@ final class ParsedDetail
 
     public function discriminatesByChome(): bool
     {
-        return $this->hasItemOfType(DetailPattern::ChomeRange, DetailPattern::ChomeExistence);
+        return $this->hasItemOfType(DetailPattern::ChomeRange, DetailPattern::ChomeExistence, DetailPattern::ChomeBanchi);
     }
 
     public function matchesChome(int $chome): bool
@@ -88,6 +96,12 @@ final class ParsedDetail
         foreach ($this->items as $item) {
             if ($item->pattern === DetailPattern::ChomeRange) {
                 foreach ($item->args['ranges'] as $r) {
+                    if ($r['from'] <= $chome && $chome <= $r['to']) {
+                        return true;
+                    }
+                }
+            } elseif ($item->pattern === DetailPattern::ChomeBanchi) {
+                foreach ($item->args['chome'] as $r) {
                     if ($r['from'] <= $chome && $chome <= $r['to']) {
                         return true;
                     }
@@ -101,7 +115,49 @@ final class ParsedDetail
 
     public function discriminatesByBanchi(): bool
     {
-        return $this->hasItemOfType(DetailPattern::BanchiRange, DetailPattern::BanchiBound);
+        return $this->hasItemOfType(DetailPattern::BanchiRange, DetailPattern::BanchiBound, DetailPattern::ChomeBanchi);
+    }
+
+    public function hasChomeBanchi(): bool
+    {
+        return $this->hasItemOfType(DetailPattern::ChomeBanchi);
+    }
+
+    /**
+     * 丁目+番地の複合条件を同時に評価する。
+     * @return bool|null true=マッチ, false=除外, null=判定不能
+     */
+    public function evaluateChomeBanchi(int $chome, int $banchi, ?int $banchiSub): ?bool
+    {
+        foreach ($this->items as $item) {
+            if ($item->pattern !== DetailPattern::ChomeBanchi) {
+                continue;
+            }
+            $chomeMatch = false;
+            foreach ($item->args['chome'] as $r) {
+                if ($r['from'] <= $chome && $chome <= $r['to']) {
+                    $chomeMatch = true;
+                    break;
+                }
+            }
+            if (!$chomeMatch) {
+                continue;
+            }
+            $b = $item->args['banchi'];
+            if ($b['type'] === 'bound') {
+                $result = $b['direction'] === 'above'
+                    ? $banchi >= $b['boundary']
+                    : $banchi <= $b['boundary'];
+                if ($result) {
+                    return true;
+                }
+            } elseif ($b['type'] === 'range') {
+                if ($banchi >= $b['from'] && $banchi <= $b['to']) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /** @return bool|null */
@@ -161,25 +217,33 @@ final class ParsedDetail
 
     public function matchesText(string $haystack): bool
     {
+        return $this->longestMatchLength($haystack) > 0;
+    }
+
+    /**
+     * haystackに含まれるキーワードのうち最長のものの文字数を返す。マッチしなければ0。
+     */
+    public function longestMatchLength(string $haystack): int
+    {
+        $longest = 0;
         foreach ($this->items as $item) {
             if ($item->pattern === DetailPattern::Text) {
                 $keyword = $item->args['keyword'];
                 if (mb_strpos($haystack, $keyword) !== false) {
-                    return true;
+                    $longest = max($longest, mb_strlen($keyword));
                 }
-                // 「白滝Ｂ・Ｃ」→「白滝Ｂ」「白滝Ｃ」のような共通接頭辞+サフィックス列挙を展開
                 foreach (self::expandSuffixList($keyword) as $expanded) {
                     if (mb_strpos($haystack, $expanded) !== false) {
-                        return true;
+                        $longest = max($longest, mb_strlen($expanded));
                     }
                 }
             } elseif ($item->pattern === DetailPattern::ChomeExistence) {
                 if (mb_strpos($haystack, '丁目') !== false) {
-                    return true;
+                    $longest = max($longest, 2);
                 }
             }
         }
-        return false;
+        return $longest;
     }
 
     // ========================================================================
@@ -205,20 +269,87 @@ final class ParsedDetail
     /** @return list<ParsedDetailItem> */
     private static function parseItems(string $detail): array
     {
-        $parts = explode('、', $detail);
+        $parts = self::splitByComma($detail);
         $items = [];
-        foreach ($parts as $part) {
-            $part = trim($part);
+        // 先読み: 数字のみのパートの直後に「N丁目」パートが続く場合、
+        // 「１、２丁目」のような省略表記とみなし丁目範囲に統合する。
+        $pendingChomeNumbers = [];
+        for ($i = 0; $i < count($parts); $i++) {
+            $part = trim($parts[$i]);
             if ($part === '') {
                 continue;
             }
+            // 数字のみのパートは丁目省略の可能性があるのでバッファに貯める
+            if (preg_match('/^[０-９0-9]+$/u', $part) === 1) {
+                // 後ろに丁目を含むパートがあるかチェック
+                $isChomePrefix = false;
+                for ($j = $i + 1; $j < count($parts); $j++) {
+                    $next = trim($parts[$j]);
+                    if (preg_match('/^[０-９0-9]+丁目/u', $next) === 1 || preg_match('/^[０-９0-9]+$/u', $next) === 1) {
+                        if (preg_match('/丁目/u', $next) === 1) {
+                            $isChomePrefix = true;
+                        }
+                        continue;
+                    }
+                    break;
+                }
+                if ($isChomePrefix) {
+                    $pendingChomeNumbers[] = NumeralConverter::toHalfwidthInt($part);
+                    continue;
+                }
+            }
+            // 丁目パートに到達したら保留中の数字を丁目範囲に統合
+            if (!empty($pendingChomeNumbers) && preg_match('/^[０-９0-9]+丁目/u', $part) === 1) {
+                $parsed = self::parseOnePart($part);
+                if ($parsed->pattern === DetailPattern::ChomeRange) {
+                    $ranges = $parsed->args['ranges'];
+                    foreach ($pendingChomeNumbers as $n) {
+                        $ranges[] = ['from' => $n, 'to' => $n];
+                    }
+                    $items[] = new ParsedDetailItem(DetailPattern::ChomeRange, ['ranges' => $ranges]);
+                } elseif ($parsed->pattern === DetailPattern::ChomeBanchi) {
+                    $chome = $parsed->args['chome'];
+                    foreach ($pendingChomeNumbers as $n) {
+                        $chome[] = ['from' => $n, 'to' => $n];
+                    }
+                    $items[] = new ParsedDetailItem(DetailPattern::ChomeBanchi, [
+                        'chome' => $chome,
+                        'banchi' => $parsed->args['banchi'],
+                    ]);
+                } else {
+                    // フォールバック: 保留をそれぞれ独立パースして追加
+                    foreach ($pendingChomeNumbers as $n) {
+                        $items[] = new ParsedDetailItem(DetailPattern::ChomeRange, ['ranges' => [['from' => $n, 'to' => $n]]]);
+                    }
+                    $items[] = $parsed;
+                }
+                $pendingChomeNumbers = [];
+                continue;
+            }
+            // 保留中のものがあるが丁目パートではなかった → 独立パース
+            foreach ($pendingChomeNumbers as $n) {
+                $items[] = self::parseOnePart((string)$n);
+            }
+            $pendingChomeNumbers = [];
             $items[] = self::parseOnePart($part);
+        }
+        // 末尾に保留が残った場合
+        foreach ($pendingChomeNumbers as $n) {
+            $items[] = self::parseOnePart((string)$n);
         }
         return $items ?: [new ParsedDetailItem(DetailPattern::Text, ['keyword' => $detail])];
     }
 
     private static function parseOnePart(string $part): ParsedDetailItem
     {
+        // 階数パターン: 「N階」「地階・階層不明」
+        if ($part === '地階・階層不明') {
+            return new ParsedDetailItem(DetailPattern::Floor, ['floor' => null]);
+        }
+        if (preg_match('/^([０-９0-9]+)階$/u', $part, $m) === 1) {
+            return new ParsedDetailItem(DetailPattern::Floor, ['floor' => NumeralConverter::toHalfwidthInt($m[1])]);
+        }
+
         // 丁目範囲: 「N丁目」「N〜M丁目」
         if (preg_match('/^([０-９0-9〜～]+)丁目(.*)$/u', $part, $m) === 1) {
             $chomeBody = $m[1];
@@ -233,8 +364,30 @@ final class ParsedDetail
             if (!empty($ranges) && $suffix === '') {
                 return new ParsedDetailItem(DetailPattern::ChomeRange, ['ranges' => $ranges]);
             }
+            // 丁目+番地以上/以下: 「N丁目M番以上」
+            if (!empty($ranges) && preg_match('/^([０-９0-9]+)番以(上|降|下)$/u', $suffix, $bm) === 1) {
+                return new ParsedDetailItem(DetailPattern::ChomeBanchi, [
+                    'chome' => $ranges,
+                    'banchi' => ['type' => 'bound', 'boundary' => NumeralConverter::toHalfwidthInt($bm[1]), 'direction' => $bm[2] === '下' ? 'below' : 'above'],
+                ]);
+            }
+            // 丁目+番地範囲: 「N丁目M番〜P番」
+            if (!empty($ranges) && preg_match('/^([０-９0-9]+)番?[〜～]([０-９0-9]+)番$/u', $suffix, $bm) === 1) {
+                return new ParsedDetailItem(DetailPattern::ChomeBanchi, [
+                    'chome' => $ranges,
+                    'banchi' => ['type' => 'range', 'from' => NumeralConverter::toHalfwidthInt($bm[1]), 'to' => NumeralConverter::toHalfwidthInt($bm[2])],
+                ]);
+            }
             // 丁目+追加条件(番、号等) → テキストとして保持
             return new ParsedDetailItem(DetailPattern::Text, ['keyword' => $part]);
+        }
+
+        // 番地以上/以下パターン（parseOnePartレベル）
+        if (preg_match('/^([０-９0-9]+)番以(上|降|下)$/u', $part, $m) === 1) {
+            return new ParsedDetailItem(DetailPattern::BanchiBound, [
+                'boundary' => NumeralConverter::toHalfwidthInt($m[1]),
+                'direction' => $m[2] === '下' ? 'below' : 'above',
+            ]);
         }
 
         // 番地範囲部分
@@ -306,12 +459,21 @@ final class ParsedDetail
             $part,
             $m
         ) === 1) {
+            $fromBanchi = NumeralConverter::toHalfwidthInt($m[1]);
+            $fromSub = ($m[2] ?? '') !== '' ? NumeralConverter::toHalfwidthInt($m[2]) : null;
+            $toBanchi = NumeralConverter::toHalfwidthInt($m[3]);
+            $toSub = ($m[4] ?? '') !== '' ? NumeralConverter::toHalfwidthInt($m[4]) : null;
+            // 「5363-7〜8」のようにto_banchi < from_banchiの場合は同一番地の枝番範囲
+            if ($fromSub !== null && $toBanchi < $fromBanchi) {
+                $toSub = $toBanchi;
+                $toBanchi = $fromBanchi;
+            }
             return [
                 'type' => 'range',
-                'from_banchi' => NumeralConverter::toHalfwidthInt($m[1]),
-                'from_sub' => ($m[2] ?? '') !== '' ? NumeralConverter::toHalfwidthInt($m[2]) : null,
-                'to_banchi' => NumeralConverter::toHalfwidthInt($m[3]),
-                'to_sub' => ($m[4] ?? '') !== '' ? NumeralConverter::toHalfwidthInt($m[4]) : null,
+                'from_banchi' => $fromBanchi,
+                'from_sub' => $fromSub,
+                'to_banchi' => $toBanchi,
+                'to_sub' => $toSub,
             ];
         }
 
@@ -361,6 +523,38 @@ final class ParsedDetail
             }
         }
         return $uncertain ? null : true;
+    }
+
+    /**
+     * カギ括弧内の「、」を無視して「、」で分割する。
+     * 例: 「中一里山「９番地の４、１２番地を除く」、長尾山」→ ['中一里山「９番地の４、１２番地を除く」', '長尾山']
+     *
+     * @return list<string>
+     */
+    private static function splitByComma(string $text): array
+    {
+        $parts = [];
+        $current = '';
+        $depth = 0;
+        $chars = mb_str_split($text);
+        foreach ($chars as $ch) {
+            if ($ch === '「' || $ch === '（' || $ch === '(') {
+                $depth++;
+                $current .= $ch;
+            } elseif ($ch === '」' || $ch === '）' || $ch === ')') {
+                $depth = max(0, $depth - 1);
+                $current .= $ch;
+            } elseif ($ch === '、' && $depth === 0) {
+                $parts[] = $current;
+                $current = '';
+            } else {
+                $current .= $ch;
+            }
+        }
+        if ($current !== '') {
+            $parts[] = $current;
+        }
+        return $parts;
     }
 
     /**

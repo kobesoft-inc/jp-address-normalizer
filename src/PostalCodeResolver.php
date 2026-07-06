@@ -41,6 +41,26 @@ final class PostalCodeResolver
 
         $details = $this->repository->details($cityCode, $town);
 
+        // 丁目+番地の複合条件（ChomeBanchi）で絞り込み
+        $hasChomeBanchi = false;
+        foreach ($details as $d) {
+            if ($d->hasChomeBanchi()) {
+                $hasChomeBanchi = true;
+                break;
+            }
+        }
+        if ($hasChomeBanchi && $street->chome !== null && $street->banchi !== null) {
+            $match = $this->findUniqueMatch(
+                $details,
+                static fn (TownDetail $d): bool => $d->hasChomeBanchi()
+                    ? $d->evaluateChomeBanchi($street->chome, $street->banchi, $street->banchiSub) === true
+                    : $d->hasChomeRange() && $d->matchesChome($street->chome)
+            );
+            if ($match !== null) {
+                return PostalCodeResolveResult::resolved($match->postalCode);
+            }
+        }
+
         // 丁目で絞り込み
         $hasChomeDetails = false;
         foreach ($details as $d) {
@@ -113,12 +133,9 @@ final class PostalCodeResolver
             }
         }
 
-        // テキストマッチ
+        // テキストマッチ（複数マッチ時は最長キーワード一致を優先）
         $haystack = $street->raw . $remainingText;
-        $match = $this->findUniqueMatch(
-            $details,
-            static fn (TownDetail $d): bool => $d->matchesText($haystack)
-        );
+        $match = $this->findBestTextMatch($details, $haystack);
         if ($match !== null) {
             return PostalCodeResolveResult::resolved($match->postalCode);
         }
@@ -191,6 +208,36 @@ final class PostalCodeResolver
     {
         $matches = array_values(array_filter($details, $predicate));
         return count($matches) === 1 ? $matches[0] : null;
+    }
+
+    /**
+     * テキストマッチで複数のdetailがマッチした場合、最長キーワード一致を優先する。
+     * 「二俣川向」と「二俣」が両方マッチする場合、「二俣川向」を採用。
+     *
+     * @param list<TownDetail> $details
+     */
+    private function findBestTextMatch(array $details, string $haystack): ?TownDetail
+    {
+        $matches = [];
+        foreach ($details as $d) {
+            $len = $d->parsed()->longestMatchLength($haystack);
+            if ($len > 0) {
+                $matches[] = [$d, $len];
+            }
+        }
+        if (count($matches) === 0) {
+            return null;
+        }
+        if (count($matches) === 1) {
+            return $matches[0][0];
+        }
+        // 最長マッチを選択
+        usort($matches, static fn ($a, $b) => $b[1] - $a[1]);
+        if ($matches[0][1] > $matches[1][1]) {
+            return $matches[0][0];
+        }
+        // 同点なら確定できない
+        return null;
     }
 
     /**

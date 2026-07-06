@@ -118,6 +118,13 @@ final class AddressNormalizer
             $unresolvedReason = $resolved->unresolvedReason;
         }
 
+        // 町名なし地域で detail に番地範囲等がある場合（例: 小菅村）
+        if ($postalCode === null && $dbTown === '' && $cityCode !== null) {
+            $resolved = $this->postalCodeResolver->resolve($cityCode, '', $street, $rest['building']);
+            $postalCode = $resolved->postalCode;
+            $unresolvedReason = $resolved->unresolvedReason;
+        }
+
         // 町名なし地域のフォールバック: 「○○村一円」のような全域エントリで郵便番号を解決
         if ($postalCode === null && $town === '' && $cityCode !== null) {
             $postalCode = $this->resolveByIchienEntry($cityCode);
