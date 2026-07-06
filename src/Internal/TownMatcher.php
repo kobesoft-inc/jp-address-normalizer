@@ -45,6 +45,7 @@ final class TownMatcher
         ['彌', '弥'],
         ['ヱ', 'エ'],  // 旧仮名遣い
         ['ヰ', 'イ'],  // 旧仮名遣い
+        ['麴', '麹'],  // 麴町（千代田区）等
     ];
 
     public function __construct(private readonly PostalCodeRepository $repository)
@@ -112,6 +113,20 @@ final class TownMatcher
                 $shortAlias = $m[1] . '町';
                 if (!isset($allTownNameSet[$shortAlias])) {
                     $variantToTown[$shortAlias] ??= $town;
+                }
+            }
+        }
+
+        // 「神田三崎町」→「三崎町」のように、旧区名等の接頭辞（AddressExceptions::
+        // OMITTABLE_TOWN_PREFIXESに登録された、既知の判定可能なもののみ）が省略される
+        // ケース。同じ市区町村に別の独立した省略後の町名が存在する場合は追加しない。
+        foreach (AddressExceptions::omittableTownPrefixes($cityCode) as $prefix) {
+            foreach ($allTownNames as $town) {
+                if (str_starts_with($town, $prefix) && mb_strlen($town) > mb_strlen($prefix)) {
+                    $withoutPrefix = mb_substr($town, mb_strlen($prefix));
+                    if (!isset($allTownNameSet[$withoutPrefix])) {
+                        $variantToTown[$withoutPrefix] ??= $town;
+                    }
                 }
             }
         }
@@ -235,9 +250,10 @@ final class TownMatcher
             if ($rematch === null) {
                 $rematch = $this->matchWithAzaStripped($candidates, $remaining);
             }
-            // 「通り名＋方角＋丁目」の後に町名が続く場合（例:「大黒町通五条上る２丁目大黒町」）。
-            // 方角キーワードの直後が丁目表記なら、それも読み飛ばして町名を探す。
-            if ($rematch === null && preg_match('/^[０-９0-9]+丁目/u', $remaining, $cm) === 1) {
+            // 「通り名＋方角＋丁目」の後に町名が続く場合（例:「大黒町通五条上る２丁目大黒町」
+            // 「河原町通二条下る二丁目下丸屋町」）。方角キーワードの直後が丁目表記
+            // （算用数字・漢数字どちらも）なら、それも読み飛ばして町名を探す。
+            if ($rematch === null && preg_match('/^(?:[０-９0-9]+|[一二三四五六七八九十]+)丁目/u', $remaining, $cm) === 1) {
                 $afterChome = mb_substr($remaining, mb_strlen($cm[0]));
                 $rematch = $this->matchFirst($candidates, $afterChome);
                 if ($rematch === null) {

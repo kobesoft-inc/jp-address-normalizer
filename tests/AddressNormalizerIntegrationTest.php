@@ -119,6 +119,27 @@ final class AddressNormalizerIntegrationTest extends TestCase
         $this->assertPostalCode('0800848', '帯広市自由が丘1丁目3-5');
     }
 
+    // 「府中市」は東京都・広島県の2市に存在するが、続く町名がどちらか一方にしか
+    // 実在しない場合は、それをもとに一意に判定できる（推測ではなく判定）。
+    public function testAmbiguousCityDisambiguatedByTownName(): void
+    {
+        $tokyo = self::$normalizer->normalize('府中市朝日町1-1');
+        $this->assertSame('東京都', $tokyo->prefectureName);
+        $this->assertSame('1830003', $tokyo->postalCode);
+
+        $hiroshima = self::$normalizer->normalize('府中市阿字町1-1');
+        $this->assertSame('広島県', $hiroshima->prefectureName);
+        $this->assertSame('7293212', $hiroshima->postalCode);
+    }
+
+    // 町名からも一意に決められない場合は、誤った推測をするより未解決のままにする。
+    public function testAmbiguousCityStaysUnresolvedWithoutDistinguishingTown(): void
+    {
+        $result = self::$normalizer->normalize('府中市1-1');
+        $this->assertNull($result->prefectureCode);
+        $this->assertNull($result->cityCode);
+    }
+
     // ================================================================
     // 全角/半角の数字混在
     // ================================================================

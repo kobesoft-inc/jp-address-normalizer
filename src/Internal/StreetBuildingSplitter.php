@@ -7,7 +7,7 @@ namespace JpAddressNormalizer\Internal;
 /**
  * 町名より後ろの文字列を、番地部分(street)と建物名等(building)に正規表現で分割する。
  *
- * 数字・丁目・番地・号・線・区・「の」・ハイフン類が続く限りをstreetとみなし、
+ * 数字・丁目・番地・号・線・区・「の」（旧仮名遣いの「ノ」を含む）・ハイフン類が続く限りをstreetとみなし、
  * それ以外の文字（建物名、私書箱の注記等）が現れた時点で以降をbuildingとする。
  */
 final class StreetBuildingSplitter
@@ -19,7 +19,9 @@ final class StreetBuildingSplitter
     // 「Ａ丁目」のようにアルファベットが丁目番号の代わりに使われる地域があるため、
     // アルファベットは単独では認識せず「丁目」に直接続く場合のみキーワード単位として認識する
     // （「ABCビル」のような建物名の先頭を誤ってstreetに取り込まないため）。
-    private const STREET_PATTERN = '/^(?:[A-Za-zＡ-Ｚａ-ｚ]+丁目|[0-90-9０-９一二三四五六七八九十百千]+|丁目|番地|地割|番|号|線|区|の|[\-－ー])+/u';
+    // 「の」は片仮名の「ノ」で書かれることもある（例:「30番地ノ1」＝「30番地の1」、
+    // 戦前の登記書類等でよく見られる表記）ため、同じ区切り文字として扱う。
+    private const STREET_PATTERN = '/^(?:[A-Za-zＡ-Ｚａ-ｚ]+丁目|[0-90-9０-９一二三四五六七八九十百千]+|丁目|番地|地割|番|号|線|区|[のノ]|[\-－ー])+/u';
     // 先頭アンカー無しで番地の開始位置を探す際に使う、より厳格なパターン。
     // STREET_PATTERNと違い、裸の漢数字1文字（一/八/九等）や「の」を開始トリガーに含めない。
     // 「一已」「八木田」「九郎新田」「地の岡」のように、漢数字や「の」が地名の一部として
@@ -27,7 +29,14 @@ final class StreetBuildingSplitter
     // （例:「字一已１８６３番地」→ 誤って「字」+「一」+「已１８６３番地」に3分割される）。
     // 算用数字や「丁目」「番地」等の明確なキーワードのみを開始トリガーとする。
     private const ANYWHERE_STREET_PATTERN = '/(?:[0-90-9０-９]+|丁目|番地|地割|番|号|線|区)+/u';
-    private const TRAILING_SEPARATOR_PATTERN = '/[\-－ーの]+$/u';
+    // 括弧書きの旧地名（`AddressExceptions::looksLikeObsoleteAnnotation`）専用の開始位置検出パターン。
+    // 旧区名（「小石川区」「浅草区」等）は必ず「区」で終わるため、ANYWHERE_STREET_PATTERNのまま
+    // 使うと「区」自体を番地の開始と誤認識し、実際の番地に辿り着く前に区名の途中で
+    // 区切ってしまう。「区」「線」は数字に後続する場合のみ意味を持つキーワードなので、
+    // ここでは開始トリガーから外す（一致箇所の続きを切り出す際はSTREET_PATTERN側の「区」
+    // 「線」が引き続き機能するため、番地に後続する「区」「線」の取りこぼしは無い）。
+    private const OBSOLETE_ANNOTATION_START_PATTERN = '/(?:[0-90-9０-９]+|丁目|番地|地割|番|号)+/u';
+    private const TRAILING_SEPARATOR_PATTERN = '/[\-－ーのノ]+$/u';
 
     /**
      * @param string|null $cityCode 既知の字名テーブル（`AddressExceptions`）の参照に使う。
@@ -60,15 +69,30 @@ final class StreetBuildingSplitter
             return ['street' => $street, 'building' => $building, 'aza' => ''];
         }
 
-        // 町名マッチで捉えきれなかった小字（例:「字北内町」）が番地の前に残っている場合、
-        // 番地部分を探して切り出す。この小字はbuildingではなく、町名と番地の間に位置する
-        // 情報（aza）として別枠に保持する（buildingに混ぜると「41-5字北内町」のように
-        // 番地の後に地名が来る、あべこべな並びで復元されてしまうため）。
+        // 町名マッチで捉えきれなかった小字（例:「字北内町」）や、括弧書きの旧地名
+        // （例:「（東京市小石川区久堅町91番地）」。`AddressExceptions::looksLikeObsoleteAnnotation`
+        // 参照）が番地の前に残っている場合、番地部分を探して切り出す。これらはbuildingでは
+        // なく、町名と番地の間に位置する情報（aza）として別枠に保持する（buildingに混ぜると
+        // 「41-5字北内町」のように番地の後に地名が来る、あべこべな並びで復元されてしまうため）。
         // それ以外（純粋な建物名等）は従来通りbuildingに残す。
-        if (preg_match('/^(?:大字|字)/u', $text) === 1
-            && preg_match(self::ANYWHERE_STREET_PATTERN, $text, $m, PREG_OFFSET_CAPTURE) === 1
+        $isObsoleteAnnotation = AddressExceptions::looksLikeObsoleteAnnotation($text);
+        $startPattern = $isObsoleteAnnotation ? self::OBSOLETE_ANNOTATION_START_PATTERN : self::ANYWHERE_STREET_PATTERN;
+        if ((preg_match('/^(?:大字|字)/u', $text) === 1 || $isObsoleteAnnotation)
+            && preg_match($startPattern, $text, $m, PREG_OFFSET_CAPTURE) === 1
         ) {
-            $aza = substr($text, 0, $m[0][1]);
+            $offset = $m[0][1];
+            // 一致箇所が「丁目」から始まる場合、その直前に丁目番号を表す漢数字（例:「二丁目」の
+            // 「二」）が続いていることがある。ANYWHERE_STREET_PATTERNは単語途中の漢数字誤爆を
+            // 避けるため裸の漢数字を開始トリガーに含めていないが、既に「丁目」自体が確定的な
+            // トリガーとして一致した以上、その直前の漢数字は丁目番号の一部と確定でき、azaに
+            // 取り込んでしまうと丁目情報が失われる（例:「磯辺通二丁目」→ azaに「二」が残り
+            // 「丁目」だけが渡されて丁目番号を復元できなくなる）ため、開始位置を前にずらす。
+            if (str_starts_with(substr($text, $offset), '丁目')
+                && preg_match('/[一二三四五六七八九十百千]+$/u', substr($text, 0, $offset), $nm) === 1
+            ) {
+                $offset -= strlen($nm[0]);
+            }
+            $aza = substr($text, 0, $offset);
             $rest = self::splitRemainder(mb_substr($text, mb_strlen($aza)));
 
             return ['street' => $rest['street'], 'building' => $rest['building'], 'aza' => $aza];

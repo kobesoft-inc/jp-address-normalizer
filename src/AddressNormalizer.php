@@ -137,8 +137,16 @@ final class AddressNormalizer
             $unresolvedReason = $resolved->unresolvedReason;
         }
 
-        // 町名なし地域で detail に番地範囲等がある場合（例: 小菅村）
-        if ($postalCode === null && $town === '' && $cityCode !== null) {
+        // 町名なし地域（小菅村等、この市区町村に町名が一つも存在しない場合）で
+        // detail に番地範囲等がある場合。「この市区町村に町名が存在しない」ことを
+        // 必ず確認してから使う。京都市中京区のように、実在する町名が499件もある
+        // 市区町村でも、そこに属さない住所の受け皿として town='' の行が1件だけ
+        // 別途存在することがあるため、単に「町名マッチに失敗した（$town===''）」
+        // というだけでこの受け皿に頼ると、本来「下丸屋町」等であるはずの住所まで
+        // 誤って市区町村の受け皿の郵便番号にしてしまう（実際に発生していたバグ）。
+        if ($postalCode === null && $town === '' && $cityCode !== null
+            && count($this->repository->townsByCity($cityCode)) === 0
+        ) {
             $resolved = $this->postalCodeResolver->resolve($cityCode, '', $street, $textForResolve);
             $postalCode = $resolved->postalCode;
             $unresolvedReason = $resolved->unresolvedReason;
@@ -147,6 +155,15 @@ final class AddressNormalizer
         // 町名なし地域のフォールバック: 「○○村一円」のような全域エントリで郵便番号を解決
         if ($postalCode === null && $town === '' && $cityCode !== null) {
             $postalCode = $this->resolveByIchienEntry($cityCode);
+        }
+
+        // 町名がこの市区町村に実在するにもかかわらずマッチできなかった場合
+        // （京都の複雑な通り名表記等）は、原因不明のまま`unresolvedReason`が
+        // 空になることを避け、町名不明として明示する。
+        if ($postalCode === null && $unresolvedReason === null && $town === '' && $cityCode !== null
+            && count($this->repository->townsByCity($cityCode)) > 0
+        ) {
+            $unresolvedReason = UnresolvedReason::TownNotFound;
         }
 
         return new ParsedAddress(
@@ -260,16 +277,35 @@ final class AddressNormalizer
 
     /**
      * 都道府県名が省略された$textの先頭から、全国の市区町村名のうち一意に決まるものを探す。
-     * 同名の市区町村が複数の都道府県に存在する場合は一致させない（誤った推測を避ける）。
+     * 同名の市区町村が複数の都道府県に存在する場合（例: 「府中市」は東京都・広島県の2市）は、
+     * 続く町名がどちらか一方にしか実在しない場合に限りそちらを採用する（例: 「府中市宮西町」の
+     * 「宮西町」は東京都府中市にしか無い）。町名からも一意に決まらない場合は、誤った推測を
+     * するよりも解決できないまま返す。
      *
      * @return array{0: string, 1: string, 2: string}|null [都道府県コード, 市区町村コード, 残りの文字列]
      */
     private function matchCityIgnoringPrefecture(string $text): ?array
     {
         foreach ($this->repository->citiesByName() as $name => $entries) {
-            if (count($entries) === 1 && str_starts_with($text, $name)) {
+            if (!str_starts_with($text, $name)) {
+                continue;
+            }
+            $remaining = mb_substr($text, mb_strlen($name));
+            if (count($entries) === 1) {
                 [$prefectureCode, $cityCode] = $entries[0];
-                return [$prefectureCode, $cityCode, mb_substr($text, mb_strlen($name))];
+                return [$prefectureCode, $cityCode, $remaining];
+            }
+
+            $matches = [];
+            foreach ($entries as $entry) {
+                [, $cityCode] = $entry;
+                if ($this->townMatcher->match($cityCode, $remaining) !== null) {
+                    $matches[] = $entry;
+                }
+            }
+            if (count($matches) === 1) {
+                [$prefectureCode, $cityCode] = $matches[0];
+                return [$prefectureCode, $cityCode, $remaining];
             }
         }
         return null;
