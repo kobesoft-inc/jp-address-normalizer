@@ -36,6 +36,15 @@ final class TownMatcher
         ['藪', '薮'],
         ['渕', '淵', '渊'],
         ['曾', '曽'],
+        ['澤', '沢'],
+        ['廣', '広'],
+        ['瀉', '潟'],
+        ['藏', '蔵'],
+        ['應', '応'],
+        ['餠', '餅'],
+        ['彌', '弥'],
+        ['ヱ', 'エ'],  // 旧仮名遣い
+        ['ヰ', 'イ'],  // 旧仮名遣い
     ];
 
     public function __construct(private readonly PostalCodeRepository $repository)
@@ -80,6 +89,28 @@ final class TownMatcher
             if (mb_substr($town, -1) === '町' && mb_strlen($town) >= 3) {
                 $shortened = mb_substr($town, 0, -1);
                 $variantToTown[$shortened] ??= $town;
+            }
+        }
+
+        // 「〜通り」の送り仮名省略バリエーション（例: 「平和通り」→「平和通」）
+        foreach ($this->repository->townsByCity($cityCode) as $town) {
+            if (str_ends_with($town, '通り')) {
+                $shortened = mb_substr($town, 0, -1);
+                $variantToTown[$shortened] ??= $town;
+            }
+        }
+
+        // 「○○町○○」のように大字名が町名を繰り返すケースでは、住所側で大字部分が
+        // 省略され「○○町」とだけ書かれることがある（例: DB「本庄町本庄」→ 入力「本庄町」）。
+        // 同じ市区町村に別の独立した「○○町」が存在する場合は誤爆を避けるため追加しない。
+        $allTownNames = $this->repository->townsByCity($cityCode);
+        $allTownNameSet = array_flip($allTownNames);
+        foreach ($allTownNames as $town) {
+            if (preg_match('/^(.+)町\1$/u', $town, $m) === 1) {
+                $shortAlias = $m[1] . '町';
+                if (!isset($allTownNameSet[$shortAlias])) {
+                    $variantToTown[$shortAlias] ??= $town;
+                }
             }
         }
 
@@ -214,16 +245,50 @@ final class TownMatcher
         if ($directMatch !== null) {
             $directMatch['kyotoStreet'] ??= null;
         }
+
+        // 町名なし地域（「○○村一円」のような全域エントリのみが存在する市区町村）は、
+        // 住所側に町名の文字が一切現れないため、上記のどのマッチにもかからない。
+        // 候補が「一円」の1件だけなら、それを消費文字数0で確定させる。
+        if ($directMatch === null) {
+            $directMatch = $this->matchIchien($cityCode);
+        }
+
         return $directMatch;
     }
 
-    private function hasAzaInText(string $text): bool
+    /**
+     * @return array{town: string, dbTown: string, matchedLength: int, kyotoStreet: ?string}|null
+     */
+    private function matchIchien(string $cityCode): ?array
     {
-        return mb_strpos($text, '大字') !== false || mb_strpos($text, '字') !== false;
+        $towns = $this->repository->townsByCity($cityCode);
+        if (count($towns) !== 1 || !str_ends_with($towns[0], '一円')) {
+            return null;
+        }
+
+        return [
+            'town' => $towns[0],
+            'dbTown' => $towns[0],
+            'matchedLength' => 0,
+            'kyotoStreet' => null,
+        ];
     }
 
     /**
-     * テキストから「大字」「字」を除去してマッチを試みる。
+     * 除去を試みるトークン（長い順）。
+     * 「大字」「字」に加え、「区」も対象とする。平成の大合併で編入された旧市町村名が
+     * 「宇陀市榛原区下井足」のように「区」付きで書かれる一方、DB上の町名は
+     * 「榛原下井足」のように「区」を含まない場合があるため。
+     */
+    private const AZA_TOKENS_PATTERN = '/大字|字|区/u';
+
+    private function hasAzaInText(string $text): bool
+    {
+        return preg_match(self::AZA_TOKENS_PATTERN, $text) === 1;
+    }
+
+    /**
+     * テキストから「大字」「字」「区」を除去してマッチを試みる。
      * マッチした場合、matchedLengthは元テキスト上での消費文字数を返す。
      *
      * @param array<string,string> $candidates
@@ -231,17 +296,7 @@ final class TownMatcher
      */
     private function matchWithAzaStripped(array $candidates, string $text): ?array
     {
-        // 「大字」「字」の出現位置を全て見つけて除去
-        $stripped = $text;
-        $azaPositions = [];
-        // 「大字」を先に処理（「字」を先にすると「大字」の「字」部分だけ消えてしまう）
-        if (preg_match_all('/大字|字/u', $text, $matches, PREG_OFFSET_CAPTURE)) {
-            $offset = 0;
-            foreach ($matches[0] as [$match, $bytePos]) {
-                $azaPositions[] = ['byte' => $bytePos, 'len' => strlen($match), 'mbLen' => mb_strlen($match)];
-            }
-        }
-        $stripped = (string) preg_replace('/大字|字/u', '', $text);
+        $stripped = (string) preg_replace(self::AZA_TOKENS_PATTERN, '', $text);
         if ($stripped === $text) {
             return null;
         }
@@ -265,7 +320,7 @@ final class TownMatcher
                 $i += 2;
                 continue;
             }
-            if (str_starts_with($remaining, '字')) {
+            if (str_starts_with($remaining, '字') || str_starts_with($remaining, '区')) {
                 $origPos += 1;
                 $i += 1;
                 continue;
