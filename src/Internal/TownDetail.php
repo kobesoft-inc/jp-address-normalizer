@@ -38,6 +38,11 @@ final class TownDetail
         return $this->parsed()->isChomeExistenceOnly();
     }
 
+    public function hasChomeAbsence(): bool
+    {
+        return $this->parsed()->hasChomeAbsence();
+    }
+
     public function matchesChome(int $chome): bool
     {
         return $this->parsed()->matchesChome($chome);

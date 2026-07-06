@@ -49,6 +49,14 @@ final class ParsedDetail
             return new self([new ParsedDetailItem(DetailPattern::ChomeExistence, [])]);
         }
 
+        // ChomeAbsence: 「丁目」（丁目がある）と対になる「番地」（丁目が無く番地で
+        // 直接区分される）という組み合わせで使われる。数字を伴わない裸の「番地」は
+        // 具体的な番地範囲ではなく、この区分ラベルとして扱う
+        // （例: 「丁目」＝6350025、「番地」＝6350026 の2件で町全体を排他的に分割）。
+        if ($detail === '番地') {
+            return new self([new ParsedDetailItem(DetailPattern::ChomeAbsence, [])]);
+        }
+
         // BanchiBound
         if (preg_match('/^([０-９0-9]+)番地?以(上|降|下)$/u', $detail, $m) === 1) {
             return new self([new ParsedDetailItem(DetailPattern::BanchiBound, [
@@ -91,9 +99,15 @@ final class ParsedDetail
         return $this->hasItemOfType(
             DetailPattern::ChomeRange,
             DetailPattern::ChomeExistence,
+            DetailPattern::ChomeAbsence,
             DetailPattern::ChomeBanchi,
             DetailPattern::ChomeBanchiGo,
         );
+    }
+
+    public function hasChomeAbsence(): bool
+    {
+        return $this->hasItemOfType(DetailPattern::ChomeAbsence);
     }
 
     /**

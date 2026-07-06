@@ -11,6 +11,10 @@ namespace JpAddressNormalizer;
  * 正式な町名も、変換せずそのまま保持する）。入力側で実際にどう書かれていたかを
  * 知りたい場合は`townRaw`（表記ゆれ吸収・正規化前の元の文字列）を参照する。
  * 住所全体の元の入力文字列は`raw`にそのまま保持している。
+ *
+ * `aza`は、町名より後・番地より前に位置する「字北内町」のような小字名で、
+ * 参照データ上の独立した町名としては見つからなかったものを保持する
+ * （建物名（`building`）とは異なり、番地の前に位置する情報のため区別している）。
  */
 final class ParsedAddress
 {
@@ -27,6 +31,7 @@ final class ParsedAddress
         public readonly ?string $kyotoStreet = null,
         public readonly string $raw = '',
         public readonly ?string $townRaw = null,
+        public readonly string $aza = '',
     ) {
     }
 
@@ -41,6 +46,7 @@ final class ParsedAddress
             . ($this->cityName ?? '')
             . ($this->kyotoStreet ?? '')
             . $this->town
+            . $this->aza
             . $this->street->format()
             . $this->building;
     }
@@ -56,6 +62,7 @@ final class ParsedAddress
             'city_name' => $this->cityName,
             'town' => $this->town,
             'town_raw' => $this->townRaw,
+            'aza' => $this->aza,
             'street' => $this->street->toArray(),
             'building' => $this->building,
             'kyoto_street' => $this->kyotoStreet,

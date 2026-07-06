@@ -127,6 +127,7 @@ final class AddressNormalizer
         // （例: 軽井沢町の「大字軽井沢」）ため、町名マッチ時に消費された分を保持しておく。
         $textForResolve = ($azaPrefix ?? '')
             . ($kyotoStreet !== null ? self::normalizeKyotoDirection($kyotoStreet) : '')
+            . $rest['aza']
             . $rest['building'];
 
         $unresolvedReason = null;
@@ -157,6 +158,7 @@ final class AddressNormalizer
             $rest['building'],
             raw: $address,
             townRaw: $townRaw,
+            aza: $rest['aza'],
             prefectureName: $prefectureName,
             cityName: $cityName,
             unresolvedReason: $unresolvedReason,

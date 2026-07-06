@@ -89,6 +89,17 @@ final class PostalCodeResolver
                 if ($match !== null) {
                     return PostalCodeResolveResult::resolved($match->postalCode);
                 }
+            } else {
+                // 「丁目」（丁目の有無）と対になる「番地」（丁目が無く番地で直接区分される）
+                // というdetailの組み合わせがある町では、丁目が無いこと自体が
+                // 「番地」側に一意に該当する根拠になる。
+                $match = $this->findUniqueMatch(
+                    $details,
+                    static fn (TownDetail $d): bool => $d->hasChomeAbsence()
+                );
+                if ($match !== null) {
+                    return PostalCodeResolveResult::resolved($match->postalCode);
+                }
             }
         }
 

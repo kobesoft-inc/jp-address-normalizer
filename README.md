@@ -34,7 +34,9 @@ $result->prefectureCode;     // '01'
 $result->prefectureName;     // '北海道'
 $result->cityCode;           // '01101'
 $result->cityName;           // '札幌市中央区'
-$result->town;               // '北一条西'
+$result->town;               // '北一条西'（jp-postal-code-db上の正式表記）
+$result->townRaw;            // '北一条西'（入力側の生の表記。表記ゆれがあれば元のまま）
+$result->aza;                // ''（DBに無い小字名が番地の前に残った場合はここに入る）
 $result->street->raw;        // '６丁目１－２'
 $result->street->chome;      // 6
 $result->street->banchi;     // 1
@@ -43,6 +45,7 @@ $result->street->go;         // null
 $result->street->format();   // '6丁目1-2'
 $result->building;           // 'アーバンネット札幌ビル２Ｆ'
 $result->format();           // '北海道札幌市中央区北一条西6丁目1-2アーバンネット札幌ビル２Ｆ'
+$result->raw;                // '北海道札幌市中央区北一条西６丁目１－２アーバンネット札幌ビル２Ｆ'（入力そのまま）
 $result->toArray();          // 連想配列として取得
 ```
 
