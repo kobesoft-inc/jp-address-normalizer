@@ -100,7 +100,7 @@ final class AddressNormalizer
             $text = mb_substr($text, $townMatch['matchedLength']);
         }
 
-        $rest = StreetBuildingSplitter::split($text);
+        $rest = StreetBuildingSplitter::split($text, $cityCode);
         $street = StreetParser::parse($rest['street']);
 
         // フォールバック: streetが空でbuildingが別の町名で始まる場合、
@@ -114,7 +114,7 @@ final class AddressNormalizer
                 $kyotoStreet = $retryMatch['kyotoStreet'];
                 $azaPrefix = self::extractAzaPrefix($townRaw);
                 $remainingAfterRetry = mb_substr($rest['building'], $retryMatch['matchedLength']);
-                $rest = StreetBuildingSplitter::split($remainingAfterRetry);
+                $rest = StreetBuildingSplitter::split($remainingAfterRetry, $cityCode);
                 $street = StreetParser::parse($rest['street']);
             }
         }
