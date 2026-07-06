@@ -143,7 +143,7 @@ final class AddressNormalizer
         // 市区町村でも、そこに属さない住所の受け皿として town='' の行が1件だけ
         // 別途存在することがあるため、単に「町名マッチに失敗した（$town===''）」
         // というだけでこの受け皿に頼ると、本来「下丸屋町」等であるはずの住所まで
-        // 誤って市区町村の受け皿の郵便番号にしてしまう（実際に発生していたバグ）。
+        // 誤って市区町村の受け皿の郵便番号にしてしまう。
         if ($postalCode === null && $town === '' && $cityCode !== null
             && count($this->repository->townsByCity($cityCode)) === 0
         ) {
