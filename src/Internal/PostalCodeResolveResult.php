@@ -2,7 +2,9 @@
 
 declare(strict_types=1);
 
-namespace JpAddressNormalizer;
+namespace JpAddressNormalizer\Internal;
+
+use JpAddressNormalizer\UnresolvedReason;
 
 final class PostalCodeResolveResult
 {

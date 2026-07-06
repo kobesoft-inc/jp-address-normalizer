@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace JpAddressNormalizer;
+namespace JpAddressNormalizer\Internal;
 
 /**
  * 町名より後ろの文字列を、番地部分(street)と建物名等(building)に正規表現で分割する。

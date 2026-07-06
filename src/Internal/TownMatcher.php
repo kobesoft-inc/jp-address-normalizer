@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace JpAddressNormalizer;
+namespace JpAddressNormalizer\Internal;
 
 /**
  * 住所文字列の残り部分に対して、市区町村コードに紐づく町名一覧から最長一致するものを探す。
@@ -60,9 +60,11 @@ final class TownMatcher
 
         $variantToTown = [];
         foreach ($this->repository->townsByCity($cityCode) as $town) {
+            $fullwidthArabic = NumeralConverter::kanjiToArabic($town);
             $variants = [
                 $town,
-                NumeralConverter::kanjiToArabic($town),
+                $fullwidthArabic,
+                NumeralConverter::toHalfwidthDigits($fullwidthArabic),
                 NumeralConverter::arabicToKanji($town),
             ];
             // 数字バリエーションに対して、さらに文字の異体字バリエーションを生成する
@@ -207,7 +209,7 @@ final class TownMatcher
      *
      * また、テキスト中の「大字」「字」を除去したバリエーションでもマッチを試みる。
      *
-     * @return array{town: string, dbTown: string, matchedLength: int, kyotoStreet: ?string}|null
+     * @return array{town: string, matchedLength: int, kyotoStreet: ?string}|null
      */
     public function match(string $cityCode, string $text): ?array
     {
@@ -249,7 +251,6 @@ final class TownMatcher
                 $kyotoStreet = mb_substr($text, 0, $afterDirection['offset'] + $extraOffset);
                 return [
                     'town' => $rematch['town'],
-                    'dbTown' => $rematch['dbTown'],
                     'matchedLength' => $afterDirection['offset'] + $extraOffset + $rematch['matchedLength'],
                     'kyotoStreet' => $kyotoStreet,
                 ];
@@ -271,7 +272,7 @@ final class TownMatcher
     }
 
     /**
-     * @return array{town: string, dbTown: string, matchedLength: int, kyotoStreet: ?string}|null
+     * @return array{town: string, matchedLength: int, kyotoStreet: ?string}|null
      */
     private function matchIchien(string $cityCode): ?array
     {
@@ -282,7 +283,6 @@ final class TownMatcher
 
         return [
             'town' => $towns[0],
-            'dbTown' => $towns[0],
             'matchedLength' => 0,
             'kyotoStreet' => null,
         ];
@@ -350,18 +350,35 @@ final class TownMatcher
 
     /**
      * @param array<string,string> $candidates
-     * @return array{town: string, dbTown: string, matchedLength: int}|null
+     * @return array{town: string, matchedLength: int}|null
      */
+    private const DIGIT_PATTERN = '/^[0-9０-９]+$/u';
+
     private function matchFirst(array $candidates, string $text): ?array
     {
         foreach ($candidates as $variant => $canonicalTown) {
-            if (str_starts_with($text, $variant)) {
-                return [
-                    'town' => NumeralConverter::arabicToKanji($canonicalTown),
-                    'dbTown' => $canonicalTown,
-                    'matchedLength' => mb_strlen($variant),
-                ];
+            // 町名が「十二」→半角"12"のように純粋な数字文字列になる変種があると、
+            // PHPの配列キーが自動的にint型になるため、文字列に戻してから比較する。
+            $variant = (string) $variant;
+            if (!str_starts_with($text, $variant)) {
+                continue;
             }
+            // 「十二」→"12"のような数字だけの町名バリエーションは、番地の先頭部分と
+            // 偶然一致しうる（例: 「12」が実際は番地「123」の一部）。マッチした直後に
+            // 数字が続く場合は、番地の一部を誤って消費しているとみなし除外する。
+            if (preg_match(self::DIGIT_PATTERN, $variant) === 1) {
+                $next = mb_substr($text, mb_strlen($variant), 1);
+                if ($next !== '' && preg_match(self::DIGIT_PATTERN, $next) === 1) {
+                    continue;
+                }
+            }
+            // DB上の正式表記（$canonicalTown）をそのまま返す。かつて算用数字を
+            // 無条件に漢数字化していたが、「南７線西」のように算用数字表記が
+            // 正式な町名も実在するため、変換せず正式表記をそのまま採用する。
+            return [
+                'town' => $canonicalTown,
+                'matchedLength' => mb_strlen($variant),
+            ];
         }
         return null;
     }

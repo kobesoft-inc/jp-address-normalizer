@@ -2,7 +2,9 @@
 
 declare(strict_types=1);
 
-namespace JpAddressNormalizer;
+namespace JpAddressNormalizer\Internal;
+
+use JpAddressNormalizer\Street;
 
 /**
  * StreetBuildingSplitterが切り出した「番地部分」の文字列を、丁目・番地・枝番・号に分解する。

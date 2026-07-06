@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace JpAddressNormalizer;
+namespace JpAddressNormalizer\Internal;
 
 /**
  * detailテキストをパースした結果。1つのdetailは複数のパターン要素(ParsedDetailItem)のOR条件。

@@ -2,7 +2,10 @@
 
 declare(strict_types=1);
 
-namespace JpAddressNormalizer;
+namespace JpAddressNormalizer\Internal;
+
+use JpAddressNormalizer\Street;
+use JpAddressNormalizer\UnresolvedReason;
 
 /**
  * 町名・番地から、郵便番号をベストエフォートで逆引きする。

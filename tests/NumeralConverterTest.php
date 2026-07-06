@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace JpAddressNormalizer\Tests;
 
-use JpAddressNormalizer\NumeralConverter;
+use JpAddressNormalizer\Internal\NumeralConverter;
 use PHPUnit\Framework\TestCase;
 
 final class NumeralConverterTest extends TestCase

@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace JpAddressNormalizer;
+namespace JpAddressNormalizer\Internal;
 
 /**
  * 町名・番地に現れる漢数字(一〜九十、十一〜九十九)と全角算用数字(１〜99)を
@@ -85,6 +85,12 @@ final class NumeralConverter
         return (int) $halfwidth;
     }
 
+    /** 文字列中の全角算用数字を半角に変換する（漢数字や他の文字はそのまま）。 */
+    public static function toHalfwidthDigits(string $text): string
+    {
+        return strtr($text, self::fullToHalfMap());
+    }
+
     /** 文字列中の漢数字(1〜99)を全角算用数字に変換する。 */
     public static function kanjiToArabic(string $text): string
     {
@@ -95,11 +101,11 @@ final class NumeralConverter
         );
     }
 
-    /** 文字列中の全角算用数字(1〜99)を漢数字に変換する。 */
+    /** 文字列中の算用数字(全角/半角、1〜99)を漢数字に変換する。 */
     public static function arabicToKanji(string $text): string
     {
         return (string) preg_replace_callback(
-            '/[０-９]+/u',
+            '/[0-9０-９]+/u',
             static function (array $m): string {
                 $halfwidth = strtr($m[0], self::fullToHalfMap());
                 $n = (int) $halfwidth;

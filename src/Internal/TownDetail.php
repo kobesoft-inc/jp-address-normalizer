@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace JpAddressNormalizer;
+namespace JpAddressNormalizer\Internal;
 
 /**
  * 郵便番号とdetail文字列のペアを表す値オブジェクト。

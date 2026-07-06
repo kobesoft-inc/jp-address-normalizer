@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace JpAddressNormalizer\Tests;
 
-use JpAddressNormalizer\StreetParser;
+use JpAddressNormalizer\Internal\StreetParser;
 use PHPUnit\Framework\TestCase;
 
 final class StreetParserTest extends TestCase

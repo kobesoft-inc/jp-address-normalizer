@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace JpAddressNormalizer\Tests;
 
-use JpAddressNormalizer\TownDetail;
+use JpAddressNormalizer\Internal\TownDetail;
 use PHPUnit\Framework\TestCase;
 
 final class TownDetailTest extends TestCase

@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace JpAddressNormalizer\Tests;
 
-use JpAddressNormalizer\PostalCodeRepository;
-use JpAddressNormalizer\PostalCodeResolver;
+use JpAddressNormalizer\Internal\PostalCodeRepository;
+use JpAddressNormalizer\Internal\PostalCodeResolver;
 use JpAddressNormalizer\Street;
 use PDO;
 use PHPUnit\Framework\TestCase;

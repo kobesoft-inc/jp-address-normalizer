@@ -4,6 +4,14 @@ declare(strict_types=1);
 
 namespace JpAddressNormalizer;
 
+/**
+ * 住所解析結果。
+ *
+ * `town`はDB（jp-postal-code-db）上の正式表記（例:「南７線西」のように算用数字が
+ * 正式な町名も、変換せずそのまま保持する）。入力側で実際にどう書かれていたかを
+ * 知りたい場合は`townRaw`（表記ゆれ吸収・正規化前の元の文字列）を参照する。
+ * 住所全体の元の入力文字列は`raw`にそのまま保持している。
+ */
 final class ParsedAddress
 {
     public function __construct(
@@ -17,9 +25,16 @@ final class ParsedAddress
         public readonly ?string $cityName = null,
         public readonly ?UnresolvedReason $unresolvedReason = null,
         public readonly ?string $kyotoStreet = null,
+        public readonly string $raw = '',
+        public readonly ?string $townRaw = null,
     ) {
     }
 
+    /**
+     * 正規化済みの各パーツを組み立て直した文字列。
+     * 表記ゆれを吸収した結果であり、元の入力文字列そのものではない
+     * （元の入力が欲しい場合は`raw`を使う）。
+     */
     public function format(): string
     {
         return ($this->prefectureName ?? '')
@@ -40,10 +55,12 @@ final class ParsedAddress
             'city_code' => $this->cityCode,
             'city_name' => $this->cityName,
             'town' => $this->town,
+            'town_raw' => $this->townRaw,
             'street' => $this->street->toArray(),
             'building' => $this->building,
             'kyoto_street' => $this->kyotoStreet,
             'unresolved_reason' => $this->unresolvedReason?->value,
+            'raw' => $this->raw,
             'formatted' => $this->format(),
         ];
     }

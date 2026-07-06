@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace JpAddressNormalizer\Tests;
 
-use JpAddressNormalizer\StreetBuildingSplitter;
+use JpAddressNormalizer\Internal\StreetBuildingSplitter;
 use PHPUnit\Framework\TestCase;
 
 final class StreetBuildingSplitterTest extends TestCase

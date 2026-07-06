@@ -4,6 +4,11 @@ declare(strict_types=1);
 
 namespace JpAddressNormalizer;
 
+use JpAddressNormalizer\Internal\PostalCodeRepository;
+use JpAddressNormalizer\Internal\PostalCodeResolver;
+use JpAddressNormalizer\Internal\StreetBuildingSplitter;
+use JpAddressNormalizer\Internal\StreetParser;
+use JpAddressNormalizer\Internal\TownMatcher;
 use PDO;
 
 /**
@@ -67,7 +72,7 @@ final class AddressNormalizer
             }
         }
         if ($prefectureCode === null) {
-            return new ParsedAddress($postalCode, null, null, '', $emptyStreet, trim($text));
+            return new ParsedAddress($postalCode, null, null, '', $emptyStreet, trim($text), raw: $address);
         }
         $prefectureName = $this->repository->prefectureName($prefectureCode);
 
@@ -78,20 +83,20 @@ final class AddressNormalizer
             [$cityCode, $text] = $this->matchCityWithGunOmitted($text, $prefectureCode);
         }
         if ($cityCode === null) {
-            return new ParsedAddress($postalCode, $prefectureCode, null, '', $emptyStreet, trim($text), prefectureName: $prefectureName);
+            return new ParsedAddress($postalCode, $prefectureCode, null, '', $emptyStreet, trim($text), raw: $address, prefectureName: $prefectureName);
         }
         $cityName = $this->repository->cityName($prefectureCode, $cityCode);
 
         $town = '';
-        $dbTown = '';
+        $townRaw = null;
         $kyotoStreet = null;
         $azaPrefix = null;
         $townMatch = $this->townMatcher->match($cityCode, $text);
         if ($townMatch !== null) {
             $town = $townMatch['town'];
-            $dbTown = $townMatch['dbTown'];
+            $townRaw = mb_substr($text, 0, $townMatch['matchedLength']);
             $kyotoStreet = $townMatch['kyotoStreet'];
-            $azaPrefix = self::extractAzaPrefix($text, $townMatch['matchedLength']);
+            $azaPrefix = self::extractAzaPrefix($townRaw);
             $text = mb_substr($text, $townMatch['matchedLength']);
         }
 
@@ -105,9 +110,9 @@ final class AddressNormalizer
             $retryMatch = $this->townMatcher->match($cityCode, $rest['building']);
             if ($retryMatch !== null) {
                 $town = $retryMatch['town'];
-                $dbTown = $retryMatch['dbTown'];
+                $townRaw = mb_substr($rest['building'], 0, $retryMatch['matchedLength']);
                 $kyotoStreet = $retryMatch['kyotoStreet'];
-                $azaPrefix = self::extractAzaPrefix($rest['building'], $retryMatch['matchedLength']);
+                $azaPrefix = self::extractAzaPrefix($townRaw);
                 $remainingAfterRetry = mb_substr($rest['building'], $retryMatch['matchedLength']);
                 $rest = StreetBuildingSplitter::split($remainingAfterRetry);
                 $street = StreetParser::parse($rest['street']);
@@ -125,14 +130,14 @@ final class AddressNormalizer
             . $rest['building'];
 
         $unresolvedReason = null;
-        if ($postalCode === null && $dbTown !== '') {
-            $resolved = $this->postalCodeResolver->resolve($cityCode, $dbTown, $street, $textForResolve);
+        if ($postalCode === null && $town !== '') {
+            $resolved = $this->postalCodeResolver->resolve($cityCode, $town, $street, $textForResolve);
             $postalCode = $resolved->postalCode;
             $unresolvedReason = $resolved->unresolvedReason;
         }
 
         // 町名なし地域で detail に番地範囲等がある場合（例: 小菅村）
-        if ($postalCode === null && $dbTown === '' && $cityCode !== null) {
+        if ($postalCode === null && $town === '' && $cityCode !== null) {
             $resolved = $this->postalCodeResolver->resolve($cityCode, '', $street, $textForResolve);
             $postalCode = $resolved->postalCode;
             $unresolvedReason = $resolved->unresolvedReason;
@@ -150,6 +155,8 @@ final class AddressNormalizer
             $town,
             $street,
             $rest['building'],
+            raw: $address,
+            townRaw: $townRaw,
             prefectureName: $prefectureName,
             cityName: $cityName,
             unresolvedReason: $unresolvedReason,
@@ -208,17 +215,16 @@ final class AddressNormalizer
     }
 
     /**
-     * 町名マッチで消費された先頭部分に「大字」「字」が含まれていれば、それを返す。
+     * 町名マッチで消費された部分（$townRaw）に「大字」「字」が含まれていれば、それを返す。
      * DBのdetail欄が「大字の有無」自体を区別条件にしている町（例: 軽井沢町の「大字軽井沢」）で、
      * 町名マッチ時に消費されて消えてしまう情報を後段のテキスト照合に残すために使う。
      */
-    private static function extractAzaPrefix(string $text, int $matchedLength): ?string
+    private static function extractAzaPrefix(string $townRaw): ?string
     {
-        $consumed = mb_substr($text, 0, $matchedLength);
-        if (str_starts_with($consumed, '大字')) {
+        if (str_starts_with($townRaw, '大字')) {
             return '大字';
         }
-        if (str_starts_with($consumed, '字')) {
+        if (str_starts_with($townRaw, '字')) {
             return '字';
         }
         return null;
