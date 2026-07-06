@@ -196,7 +196,7 @@ final class TownMatcher
         return $results;
     }
 
-    private const KYOTO_DIRECTION_PATTERN = '/(?:上[ルる]|下[ルる]|[東西南北]入[ルる]?)/u';
+    private const KYOTO_DIRECTION_PATTERN = '/(?:上(?:ル|る|がる)|下(?:ル|る|がる)|[東西南北]入(?:ル|る)?)/u';
 
     /**
      * $textの先頭から最長一致する町名を探す。
@@ -227,16 +227,30 @@ final class TownMatcher
         // 京都の通り名対応
         $afterDirection = $this->findAfterDirection($text);
         if ($afterDirection !== null) {
-            $rematch = $this->matchFirst($candidates, $afterDirection['remaining']);
+            $remaining = $afterDirection['remaining'];
+            $extraOffset = 0;
+            $rematch = $this->matchFirst($candidates, $remaining);
             if ($rematch === null) {
-                $rematch = $this->matchWithAzaStripped($candidates, $afterDirection['remaining']);
+                $rematch = $this->matchWithAzaStripped($candidates, $remaining);
+            }
+            // 「通り名＋方角＋丁目」の後に町名が続く場合（例:「大黒町通五条上る２丁目大黒町」）。
+            // 方角キーワードの直後が丁目表記なら、それも読み飛ばして町名を探す。
+            if ($rematch === null && preg_match('/^[０-９0-9]+丁目/u', $remaining, $cm) === 1) {
+                $afterChome = mb_substr($remaining, mb_strlen($cm[0]));
+                $rematch = $this->matchFirst($candidates, $afterChome);
+                if ($rematch === null) {
+                    $rematch = $this->matchWithAzaStripped($candidates, $afterChome);
+                }
+                if ($rematch !== null) {
+                    $extraOffset = mb_strlen($cm[0]);
+                }
             }
             if ($rematch !== null) {
-                $kyotoStreet = mb_substr($text, 0, $afterDirection['offset']);
+                $kyotoStreet = mb_substr($text, 0, $afterDirection['offset'] + $extraOffset);
                 return [
                     'town' => $rematch['town'],
                     'dbTown' => $rematch['dbTown'],
-                    'matchedLength' => $afterDirection['offset'] + $rematch['matchedLength'],
+                    'matchedLength' => $afterDirection['offset'] + $extraOffset + $rematch['matchedLength'],
                     'kyotoStreet' => $kyotoStreet,
                 ];
             }

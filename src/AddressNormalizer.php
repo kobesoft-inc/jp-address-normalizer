@@ -85,11 +85,13 @@ final class AddressNormalizer
         $town = '';
         $dbTown = '';
         $kyotoStreet = null;
+        $azaPrefix = null;
         $townMatch = $this->townMatcher->match($cityCode, $text);
         if ($townMatch !== null) {
             $town = $townMatch['town'];
             $dbTown = $townMatch['dbTown'];
             $kyotoStreet = $townMatch['kyotoStreet'];
+            $azaPrefix = self::extractAzaPrefix($text, $townMatch['matchedLength']);
             $text = mb_substr($text, $townMatch['matchedLength']);
         }
 
@@ -105,22 +107,33 @@ final class AddressNormalizer
                 $town = $retryMatch['town'];
                 $dbTown = $retryMatch['dbTown'];
                 $kyotoStreet = $retryMatch['kyotoStreet'];
+                $azaPrefix = self::extractAzaPrefix($rest['building'], $retryMatch['matchedLength']);
                 $remainingAfterRetry = mb_substr($rest['building'], $retryMatch['matchedLength']);
                 $rest = StreetBuildingSplitter::split($remainingAfterRetry);
                 $street = StreetParser::parse($rest['street']);
             }
         }
 
+        // 京都の通り名（「七条通油小路東入」等）は、DBのdetail欄に地区名として
+        // そのまま収録されていることが多いため、郵便番号の逆引き時のテキスト照合対象に含める。
+        // DB側は「上る」「下る」（ひらがな、「がる」無し）で統一されているため、
+        // 入力側の表記ゆれ（「上ル」「上がる」等）をそれに合わせて正規化する。
+        // 「大字」「字」も、DBのdetail欄が「大字の有無」自体を区別条件にしていることがある
+        // （例: 軽井沢町の「大字軽井沢」）ため、町名マッチ時に消費された分を保持しておく。
+        $textForResolve = ($azaPrefix ?? '')
+            . ($kyotoStreet !== null ? self::normalizeKyotoDirection($kyotoStreet) : '')
+            . $rest['building'];
+
         $unresolvedReason = null;
         if ($postalCode === null && $dbTown !== '') {
-            $resolved = $this->postalCodeResolver->resolve($cityCode, $dbTown, $street, $rest['building']);
+            $resolved = $this->postalCodeResolver->resolve($cityCode, $dbTown, $street, $textForResolve);
             $postalCode = $resolved->postalCode;
             $unresolvedReason = $resolved->unresolvedReason;
         }
 
         // 町名なし地域で detail に番地範囲等がある場合（例: 小菅村）
         if ($postalCode === null && $dbTown === '' && $cityCode !== null) {
-            $resolved = $this->postalCodeResolver->resolve($cityCode, '', $street, $rest['building']);
+            $resolved = $this->postalCodeResolver->resolve($cityCode, '', $street, $textForResolve);
             $postalCode = $resolved->postalCode;
             $unresolvedReason = $resolved->unresolvedReason;
         }
@@ -179,6 +192,36 @@ final class AddressNormalizer
         $text = (string) preg_replace('/(?<=[0-9０-９一二三四五六七八九十百千壱弐参])[ーｰ](?=[0-9０-９一二三四五六七八九十百千壱弐参])/u', '-', $text);
 
         return $text;
+    }
+
+    /**
+     * 京都の通り名の方角表記（「上ル」「上がる」等）を、DB上の表記（「上る」「下る」、
+     * 「がる」無し）に統一する。
+     */
+    private static function normalizeKyotoDirection(string $text): string
+    {
+        return (string) preg_replace(
+            ['/上(?:ル|がる)/u', '/下(?:ル|がる)/u', '/([東西南北]入)ル/u'],
+            ['上る', '下る', '$1'],
+            $text
+        );
+    }
+
+    /**
+     * 町名マッチで消費された先頭部分に「大字」「字」が含まれていれば、それを返す。
+     * DBのdetail欄が「大字の有無」自体を区別条件にしている町（例: 軽井沢町の「大字軽井沢」）で、
+     * 町名マッチ時に消費されて消えてしまう情報を後段のテキスト照合に残すために使う。
+     */
+    private static function extractAzaPrefix(string $text, int $matchedLength): ?string
+    {
+        $consumed = mb_substr($text, 0, $matchedLength);
+        if (str_starts_with($consumed, '大字')) {
+            return '大字';
+        }
+        if (str_starts_with($consumed, '字')) {
+            return '字';
+        }
+        return null;
     }
 
     private const KE_VARIANTS = ['ケ', 'ヶ', 'が', 'ガ', 'ヵ'];

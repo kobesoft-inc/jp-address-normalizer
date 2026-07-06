@@ -41,10 +41,10 @@ final class PostalCodeResolver
 
         $details = $this->repository->details($cityCode, $town);
 
-        // 丁目+番地の複合条件（ChomeBanchi）で絞り込み
+        // 丁目+番地(+号)の複合条件（ChomeBanchi / ChomeBanchiGo）で絞り込み
         $hasChomeBanchi = false;
         foreach ($details as $d) {
-            if ($d->hasChomeBanchi()) {
+            if ($d->hasChomeBanchi() || $d->hasChomeBanchiGo()) {
                 $hasChomeBanchi = true;
                 break;
             }
@@ -52,9 +52,15 @@ final class PostalCodeResolver
         if ($hasChomeBanchi && $street->chome !== null && $street->banchi !== null) {
             $match = $this->findUniqueMatch(
                 $details,
-                static fn (TownDetail $d): bool => $d->hasChomeBanchi()
-                    ? $d->evaluateChomeBanchi($street->chome, $street->banchi, $street->banchiSub) === true
-                    : $d->hasChomeRange() && $d->matchesChome($street->chome)
+                static function (TownDetail $d) use ($street): bool {
+                    if ($d->hasChomeBanchiGo()) {
+                        return $d->evaluateChomeBanchiGo($street->chome, $street->banchi, $street->go) === true;
+                    }
+                    if ($d->hasChomeBanchi()) {
+                        return $d->evaluateChomeBanchi($street->chome, $street->banchi, $street->banchiSub) === true;
+                    }
+                    return $d->hasChomeRange() && $d->matchesPureChome($street->chome);
+                }
             );
             if ($match !== null) {
                 return PostalCodeResolveResult::resolved($match->postalCode);
@@ -150,7 +156,7 @@ final class PostalCodeResolver
         ));
         if (count($catchAll) === 1) {
             $others = array_values(array_filter($details, static fn (TownDetail $d): bool => $d !== $catchAll[0]));
-            if (count($others) > 0 && self::allDefinitelyExcluded($others, $street)) {
+            if (count($others) > 0 && self::allDefinitelyExcluded($others, $street, $haystack)) {
                 return PostalCodeResolveResult::resolved($catchAll[0]->postalCode);
             }
         }
@@ -246,9 +252,20 @@ final class PostalCodeResolver
     /**
      * @param list<TownDetail> $others
      */
-    private static function allDefinitelyExcluded(array $others, Street $street): bool
+    private static function allDefinitelyExcluded(array $others, Street $street, string $haystack): bool
     {
         foreach ($others as $d) {
+            if ($d->hasChomeBanchiGo()) {
+                // 丁目+番+号の複合条件は、丁目・番地の両方が分かっている場合のみ
+                // 正しく除外判定できる（evaluateChomeBanchiGo()が両方を必要とするため）。
+                if ($street->chome === null || $street->banchi === null) {
+                    return false;
+                }
+                if ($d->evaluateChomeBanchiGo($street->chome, $street->banchi, $street->go) !== false) {
+                    return false;
+                }
+                continue;
+            }
             if ($d->hasChomeBanchi()) {
                 // 丁目+番地の複合条件は、丁目・番地の両方が分かっている場合のみ
                 // 正しく除外判定できる（evaluateChomeBanchi()が両方を必要とするため）。
@@ -281,6 +298,18 @@ final class PostalCodeResolver
                 if ($d->evaluateBanchi($street->banchi, $street->banchiSub) !== false) {
                     return false;
                 }
+                continue;
+            }
+            // 階数条件は上のブロックで既に判定済みのはずで、ここでは対象外
+            // （matchesText()は階数を理解できないため、誤って除外扱いにしないよう保守的に扱う）。
+            if ($d->describesFloor()) {
+                return false;
+            }
+            // 残りは地区名・建物名等のテキスト条件（「大字」「○○ビル」等）。
+            // ある程度長さのある固有名詞的キーワードであれば、住所に一切含まれていない
+            // ことをもって該当しないと確定できる（「南」等の短い方角語は自由記述の
+            // 省略・言い換えの可能性があるため対象外）。
+            if ($d->isConfidentlyExcludableByTextAbsence() && !$d->matchesText($haystack)) {
                 continue;
             }
             return false;

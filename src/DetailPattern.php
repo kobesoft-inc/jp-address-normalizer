@@ -10,6 +10,7 @@ enum DetailPattern: string
     case ChomeRange = 'chome_range';
     case ChomeExistence = 'chome_existence';
     case ChomeBanchi = 'chome_banchi';
+    case ChomeBanchiGo = 'chome_banchi_go';
     case BanchiRange = 'banchi_range';
     case BanchiBound = 'banchi_bound';
     case Floor = 'floor';

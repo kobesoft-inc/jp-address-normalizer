@@ -75,6 +75,16 @@ final class TownDetail
         return $this->parsed()->evaluateChomeBanchi($chome, $banchi, $banchiSub);
     }
 
+    public function hasChomeBanchiGo(): bool
+    {
+        return $this->parsed()->hasChomeBanchiGo();
+    }
+
+    public function evaluateChomeBanchiGo(int $chome, int $banchi, ?int $go): bool
+    {
+        return $this->parsed()->evaluateChomeBanchiGo($chome, $banchi, $go);
+    }
+
     public function describesFloor(): bool
     {
         return $this->parsed()->discriminatesByFloor();
@@ -93,6 +103,11 @@ final class TownDetail
     public function matchesText(string $haystack): bool
     {
         return $this->parsed()->matchesText($haystack);
+    }
+
+    public function isConfidentlyExcludableByTextAbsence(): bool
+    {
+        return $this->parsed()->isConfidentlyExcludableByTextAbsence();
     }
 
     /** @return array<string, mixed> */
