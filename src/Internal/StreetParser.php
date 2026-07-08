@@ -75,6 +75,43 @@ final class StreetParser
         return new Street($raw, $chome, $banchi, $banchiSub, $go, $chomeLabel);
     }
 
+    // 「の」は片仮名の「ノ」で書かれることもある（他の枝番表記と同様）。甲乙丙丁の他に
+    // 十二支（子丑寅卯辰巳午未申酉戌亥）で順序を表す地域もある（例:「800番地ノ甲」
+    // 「5990番地の卯」）。
+    private const BANCHI_SUB_LABEL_PATTERN = '/^[のノ](甲|乙|丙|丁|子|丑|寅|卯|辰|巳|午|未|申|酉|戌|亥|内[0-90-9０-９一二三四五六七八九十百千ｦ-ﾟァ-ヶA-Za-zＡ-Ｚａ-ｚ]{0,4})$/u';
+
+    /**
+     * 「486番地の甲」「2505番地の内イ」のように、番地の枝番が甲乙丙等の順序表記や
+     * 「内」＋記号で書かれるケースに対応する。$buildingがこの表記だけで構成されている
+     * （番地の枝番以外の情報を含まない）場合に限り、$streetの$banchiSubLabelへ
+     * 吸収し、$buildingを空にする。数字の枝番（$banchiSub）と異なりStreet::formatが
+     * この文字列をそのまま保持できるため、buildingに残すよりも情報を失わない。
+     *
+     * @return array{0: Street, 1: string} [調整後のStreet, 調整後のbuilding]
+     */
+    public static function absorbBanchiSubLabel(Street $street, string $building): array
+    {
+        if ($street->banchi === null || $street->banchiSub !== null) {
+            return [$street, $building];
+        }
+
+        if (preg_match(self::BANCHI_SUB_LABEL_PATTERN, $building, $m) === 1) {
+            $street = new Street(
+                $street->raw . $building,
+                $street->chome,
+                $street->banchi,
+                null,
+                $street->go,
+                $street->chomeLabel,
+                $m[1],
+            );
+
+            return [$street, ''];
+        }
+
+        return [$street, $building];
+    }
+
     /** @return list<int> */
     private static function extractNumbers(string $text): array
     {

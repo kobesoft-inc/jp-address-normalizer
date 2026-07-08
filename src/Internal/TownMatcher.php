@@ -136,6 +136,45 @@ final class TownMatcher
         return $this->candidatesByCity[$cityCode] = $variantToTown;
     }
 
+    /** @var array<string,array<string,string>> 市区町村コード => (「町」を付加した町名 => 正規の町名) */
+    private array $appendedMachiCandidatesByCity = [];
+
+    /**
+     * 「町」を含まない町名（例: DB「清滝」）に、住所側で「町」が付加されて書かれる
+     * ケース（例:「清滝町500」）に対応するための、専用の候補一覧。
+     *
+     * `candidatesForCity`の一般バリエーションには含めない。含めてしまうと、「大字」
+     * 「字」除去マッチ（`matchWithAzaStripped`）が文字を除去した結果、たまたま
+     * 「TOWNNAME」＋「字」＋「町」という並びが「TOWNNAME」＋「町」という付加バリエーションに
+     * 一致してしまい、本来別の地名を指す「字」以降の文字列（例:「貞光字町37番地」の
+     * 「字」に続く小字名「町」）を誤って読み飛ばしてしまうため（実際に発生した）。
+     * この一覧は`match()`内で元の文字列に対して直接一致を試す用途のみに使い、
+     * 字除去マッチには使わない。
+     *
+     * @return array<string,string>
+     */
+    private function appendedMachiCandidates(string $cityCode): array
+    {
+        if (isset($this->appendedMachiCandidatesByCity[$cityCode])) {
+            return $this->appendedMachiCandidatesByCity[$cityCode];
+        }
+
+        $allTownNames = $this->repository->townsByCity($cityCode);
+        $allTownNameSet = array_flip($allTownNames);
+        $candidates = [];
+        foreach ($allTownNames as $town) {
+            if (!str_contains($town, '町')) {
+                $withSuffix = $town . '町';
+                if (!isset($allTownNameSet[$withSuffix])) {
+                    $candidates[$withSuffix] ??= $town;
+                }
+            }
+        }
+        uksort($candidates, static fn (string $a, string $b) => mb_strlen($b) - mb_strlen($a));
+
+        return $this->appendedMachiCandidatesByCity[$cityCode] = $candidates;
+    }
+
     /**
      * 町名中の「町」「区」等の区切りの後ろに「大字」「字」を挿入したバリエーションを生成。
      * 例: 「武雄町昭和」→ [「武雄町大字昭和」「武雄町字昭和」]
@@ -230,6 +269,16 @@ final class TownMatcher
     {
         $candidates = $this->candidatesForCity($cityCode);
         $directMatch = $this->matchFirst($candidates, $text);
+
+        // 「町」が付加された表記（例:「清滝町500」）。字除去マッチを経由させない
+        // 専用の候補一覧を、元の文字列に対して直接一致させる（理由は
+        // `appendedMachiCandidates`のdocblock参照）。
+        $appendedMachiMatch = $this->matchFirst($this->appendedMachiCandidates($cityCode), $text);
+        if ($appendedMachiMatch !== null
+            && ($directMatch === null || $appendedMachiMatch['matchedLength'] > $directMatch['matchedLength'])
+        ) {
+            $directMatch = $appendedMachiMatch;
+        }
 
         // テキスト中の「大字」「字」を除去して再マッチ（入力に余分な字/大字がある場合）
         if ($directMatch === null || $this->hasAzaInText($text)) {

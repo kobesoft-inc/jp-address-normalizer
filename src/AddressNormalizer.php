@@ -100,24 +100,63 @@ final class AddressNormalizer
             $text = mb_substr($text, $townMatch['matchedLength']);
         }
 
-        $rest = StreetBuildingSplitter::split($text, $cityCode);
-        $street = StreetParser::parse($rest['street']);
+        // 町名の候補がこの市区町村に実在するにもかかわらず、どれとも一致せず、かつ
+        // 残りの文字列が「大字」「小字」「字」で始まっていない場合（法人番号データベースの
+        // 市区町村コードと住所テキストの不整合等。例:「大阪市港区九条通四丁目361番地」—
+        // 「九条」は実際には大阪市西区の町名）。番地の開始位置が分からないため、番地部分を
+        // 探そうとすると、地名の先頭の裸の漢数字（「九条」の「九」等）を誤って番地の数字
+        // として取り込んでしまう（実際に発生した）。「大字」「小字」「字」から始まる場合は
+        // 町名マッチの成否に関わらずStreetBuildingSplitter側で安全に処理できるため対象外
+        // （これを対象に含めると、単純に町名マッチが失敗しただけの正当なケースまで
+        // buildingへ落としてしまう）。
+        if ($townMatch === null
+            && count($this->repository->townsByCity($cityCode)) > 0
+            && preg_match('/^(?:大字|小字|字)/u', $text) === 0
+        ) {
+            $rest = ['street' => '', 'building' => $text, 'aza' => ''];
+            $street = StreetParser::parse('');
+        } else {
+            $rest = StreetBuildingSplitter::split($text, $cityCode);
+            $street = StreetParser::parse($rest['street']);
+        }
 
         // フォールバック: streetが空でbuildingが別の町名で始まる場合、
         // 最初のマッチが短すぎた可能性がある（例: 「本丸子町」→「本」+「丸子町...」）。
-        // buildingの先頭から再度町名マッチを試み、成功すればそちらを採用する。
+        // buildingの先頭から再度町名マッチを試み、最初より長く一致した場合に限って採用する
+        // （最長一致の原則に合わせる）。最初と同じか短い再マッチは、地名の一部
+        // （例:「弘法町弘法山19」の「弘法山」）が偶然既存の町名と前方一致しただけの
+        // 可能性が高く、採用するとその後ろの文字列を丸ごと失ってしまうため採用しない。
+        //
+        // 比較にはmatchedLengthそのものではなく、そこからkyotoStreet分を除いた
+        // 「町名部分だけの長さ」を使う。京都の通り名表記（「烏丸御池上る東側」等）では
+        // matchedLengthに通り名部分が含まれるため、それを含めたまま比較すると、
+        // 通り名が長いだけで本来採用すべき再マッチ（例:「二条殿町」）を誤って
+        // 短いと判定してしまう（実際に発生した）。
         if ($townMatch !== null && $rest['street'] === '' && $rest['building'] !== '') {
             $retryMatch = $this->townMatcher->match($cityCode, $rest['building']);
-            if ($retryMatch !== null) {
+            $townNameLength = $townMatch['matchedLength'] - mb_strlen($townMatch['kyotoStreet'] ?? '');
+            $retryNameLength = $retryMatch !== null
+                ? $retryMatch['matchedLength'] - mb_strlen($retryMatch['kyotoStreet'] ?? '')
+                : 0;
+            if ($retryMatch !== null && $retryNameLength > $townNameLength) {
+                // 最初のマッチで町名として消費された文字列（$townRaw、京都の通り名を
+                // 含む）は、再マッチにより「実は町名の一部ではなかった」と分かるが、
+                // 入力に実在した文字列である以上どこかに保持しなければ失われてしまう
+                // （例:「烏丸御池上る東側二条殿町541番地」→ 再マッチ後も「烏丸御池上る東側」
+                // を保持する必要がある）。町名と番地の間ではなく町名の前に位置する情報
+                // なので、$kyotoStreetに追記する（$kyotoStreetのformat()上の位置は
+                // town の直前）。
+                $kyotoStreet = $townRaw . ($retryMatch['kyotoStreet'] ?? '');
                 $town = $retryMatch['town'];
                 $townRaw = mb_substr($rest['building'], 0, $retryMatch['matchedLength']);
-                $kyotoStreet = $retryMatch['kyotoStreet'];
                 $azaPrefix = self::extractAzaPrefix($townRaw);
                 $remainingAfterRetry = mb_substr($rest['building'], $retryMatch['matchedLength']);
                 $rest = StreetBuildingSplitter::split($remainingAfterRetry, $cityCode);
                 $street = StreetParser::parse($rest['street']);
             }
         }
+
+        [$street, $rest['building']] = StreetParser::absorbBanchiSubLabel($street, $rest['building']);
 
         // 京都の通り名（「七条通油小路東入」等）は、DBのdetail欄に地区名として
         // そのまま収録されていることが多いため、郵便番号の逆引き時のテキスト照合対象に含める。

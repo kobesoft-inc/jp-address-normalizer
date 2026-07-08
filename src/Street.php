@@ -14,6 +14,10 @@ namespace JpAddressNormalizer;
  * 丁目は通常数字だが、区画整理の経緯等で「Ａ丁目」「Ｂ丁目」のようにアルファベットが
  * 使われている地域も実在するため、その場合は$chomeではなく$chomeLabelに格納する
  * （$chomeと$chomeLabelが同時にセットされることはない）。
+ *
+ * 枝番も通常数字だが、「486番地の甲」「2505番地の内イ」のように、甲乙丙等の順序表記や
+ * 「内」＋記号が使われる地域があるため、その場合は$banchiSubではなく$banchiSubLabelに
+ * 格納する（$banchiSubと$banchiSubLabelが同時にセットされることはない）。
  */
 final class Street
 {
@@ -24,6 +28,7 @@ final class Street
         public readonly ?int $banchiSub,
         public readonly ?int $go,
         public readonly ?string $chomeLabel = null,
+        public readonly ?string $banchiSubLabel = null,
     ) {
     }
 
@@ -53,6 +58,8 @@ final class Street
             $number = (string) $this->banchi;
             if ($this->banchiSub !== null) {
                 $number .= "-{$this->banchiSub}";
+            } elseif ($this->banchiSubLabel !== null) {
+                $number .= "の{$this->banchiSubLabel}";
             }
             if ($this->go !== null) {
                 $number .= "番{$this->go}号";
@@ -72,6 +79,7 @@ final class Street
             'chome_label' => $this->chomeLabel,
             'banchi' => $this->banchi,
             'banchi_sub' => $this->banchiSub,
+            'banchi_sub_label' => $this->banchiSubLabel,
             'go' => $this->go,
         ];
     }
